@@ -51,6 +51,19 @@ option(PATCH_FSPYTHON "Build subdirs with source using gfortran" OFF)
 option(FSPYTHON_BUILD_REQ "Pip will use requirmenets files with a snapshot of pkg revisions when installing pkgs into fspython" OFF)
 option(FSL_INSTALL "force install of FSL binaries for linux platforms only" OFF)
 option(TEST_WITH_CUDA "Allow tests to run that use cuda libs and require install of cuda drivers" OFF)
+option(INTEGRATE_SAMSEG "Integrate standalone SAMSEG" OFF)
+option(FIPS_SUPPORT "allow FS license to be read on FIPS system" ON)
+option(FSPYTHON_INSTALL_TREE "install fspython distro and scripts to a separate install tree" OFF)
+option(APPLE_ARM64 "Mac arm64 build" OFF)
+
+message(STATUS "For HOST_OS=${HOST_OS} INTEGRATE_SAMSEG=${INTEGRATE_SAMSEG}")
+if(NOT "${USER_SAMSEG_PATH}" STREQUAL "")
+  message(STATUS "User defined SAMSEG sandbox ${USER_SAMSEG_PATH}")
+  if(NOT INTEGRATE_SAMSEG)
+    message(WARNING "set INTEGRATE_SAMSEG=ON, USER_SAMSEG_PATH only work with INTEGRATE_SAMSEG=ON")
+    set(INTEGRATE_SAMSEG ON)
+  endif()
+endif()
 
 #  Modern compilers on new platforms often provide many more warnings than older compilers
 #  for example the gcc 7.5.0 compiler warnings about falling through switch statements
@@ -165,11 +178,16 @@ if(NOT APPLE)
      find_library(LAPACK_LIBRARIES NAMES liblapack.a)
      find_library(QUADMATH_LIBRARIES HINTS /usr/lib/gcc/x86_64-linux-gnu/${HOST_OS_GCC_VERSION} NAMES libquadmath.a libquadmath.so libquadmath.so.0)
   elseif(HOST_OS MATCHES "CentOS9stream" OR HOST_OS MATCHES "CentOS9")
+     if(HOST_OS MATCHES "CentOS9stream" OR HOST_OS MATCHES "CentOS9" AND HOST_OS_GCC_VERSION MATCHES "11")
+        set(CMAKE_CXX_STANDARD 17)
+        # while does not compile...
+        set(BUILD_FORTRAN OFF)
+     endif()
      find_library(GFORTRAN_LIBRARIES HINTS /usr/lib64 /usr/lib /usr/lib/gcc/*/*/ NAMES libgfortran.a gfortran)
      find_library(QUADMATH_LIBRARIES HINTS /usr/lib64 /usr/lib /usr/lib/gcc/*/*/ NAMES libquadmath.a libquadmath.so libquadmath.so.0)
      find_library(BLAS_LIBRARIES NAMES libblas.so.3)
      find_library(LAPACK_LIBRARIES NAMES liblapack.so.3)
-     set(CMAKE_CXX_STANDARD 14)
+     # set(CMAKE_CXX_STANDARD 14)
   else()
      find_library(GFORTRAN_LIBRARIES HINTS /usr/lib64 /usr/lib /usr/lib/gcc/*/*/ NAMES libgfortran.a gfortran)
      find_library(QUADMATH_LIBRARIES HINTS /usr/lib64 /usr/lib /usr/lib/gcc/*/*/ NAMES libquadmath.a libquadmath.so libquadmath.so.0)
@@ -277,6 +295,10 @@ if(NOT Qt6_DIR)
      if(HOST_OS MATCHES "CentOS9stream" OR HOST_OS MATCHES "CentOS9")
         # 5.15.9 from natively installed packages
         set(Qt5_DIR /lib64/cmake/Qt5 CACHE PATH "Qt5 install directory")
+     elseif(HOST_OS MATCHES "Ubuntu22" AND HOST_OS_GCC_VERSION MATCHES "11")
+        set(Qt5_DIR /usr/lib/x86_64-linux-gnu/cmake/Qt5 CACHE PATH "Qt5 install directory")
+     elseif(HOST_OS MATCHES "Ubuntu22" AND HOST_OS_GCC_VERSION MATCHES "8")
+        set(Qt5_DIR ${FS_PACKAGES_DIR}/qt/5.12.11_LTS_ub18/lib/cmake/Qt5 CACHE PATH "Qt5 install directory")
      elseif(HOST_OS MATCHES "CentOS8stream" OR HOST_OS MATCHES "CentOS8" OR HOST_OS MATCHES "Rocky8")
         set(Qt5_DIR ${FS_PACKAGES_DIR}/qt/5.12.11_LTS_cos7/lib/cmake/Qt5 CACHE PATH "Qt5 install directory")
      elseif(HOST_OS MATCHES "Ubuntu18" OR HOST_OS MATCHES "Ubuntu20" OR HOST_OS MATCHES "Ubuntu22")
@@ -305,8 +327,13 @@ endif()
 # -------- vtk --------
 
 if(NOT VTK_DIR)
-	if(HOST_OS MATCHES "CentOS9stream" OR HOST_OS MATCHES "CentOS9")
+   if(HOST_OS MATCHES "CentOS9stream" OR HOST_OS MATCHES "CentOS9")
       set(VTK_DIR ${FS_PACKAGES_DIR}/vtk/8.2/lib64/cmake/vtk-8.2 CACHE PATH "VTK install directory")
+   elseif(HOST_OS MATCHES "Ubuntu22" AND HOST_OS_GCC_VERSION MATCHES "11")
+      set(VTK_DIR ${FS_PACKAGES_DIR}/vtk/8.2_ubuntu22/lib64/cmake/vtk-8.2 CACHE PATH "VTK install directory")
+      set(VTK_LIB64_DIR ${FS_PACKAGES_DIR}/vtk/8.2_ubuntu22/lib64 CACHE PATH "VTK library directory")
+   elseif(HOST_OS MATCHES "Ubuntu22" AND HOST_OS_GCC_VERSION MATCHES "8")
+      set(VTK_DIR ${FS_PACKAGES_DIR}/vtk/7.1/lib/cmake/vtk-7.1 CACHE PATH "VTK install directory")
    else()
       set(VTK_DIR ${FS_PACKAGES_DIR}/vtk/7.1 CACHE PATH "VTK install directory")
    endif()
@@ -326,6 +353,13 @@ if(VTK_FOUND AND VTK_BUILD_SHARED_LIBS)
     # special libvtkNetCDF
     file(GLOB _found_library "${VTK_LIBRARY_DIRS}/libvtkNetCDF*.so*")
     list(APPEND _vtk_library_list ${_found_library})
+    # special case for above on Ubuntu 22
+    if(VTK_LIB64_DIR)
+        file(GLOB _found_library "${VTK_LIB64_DIR}/libvtkproj*.so*")
+        list(APPEND _vtk_library_list ${_found_library})
+        file(GLOB _found_library "${VTK_LIB64_DIR}/libvtkNetCDF*.so*")
+        list(APPEND _vtk_library_list ${_found_library})
+    endif()
     # the rest of the VTK libraries
     foreach(_vtk_module ${VTK_MODULES_ENABLED})
       foreach(_vtk_library ${${_vtk_module}_LIBRARIES})
@@ -349,11 +383,15 @@ endif()
 
 # -------- itk --------
 if(NOT ITK_DIR)
-	if(HOST_OS MATCHES "CentOS9stream" OR HOST_OS MATCHES "CentOS9")
-      set(ITK_DIR ${FS_PACKAGES_DIR}/itk/5.4.0_centos8/lib/cmake CACHE PATH "ITK install directory")
+   if(HOST_OS MATCHES "CentOS9stream" OR HOST_OS MATCHES "CentOS9")
+      set(ITK_DIR ${FS_PACKAGES_DIR}/itk/5.4rc01_centos9/lib/cmake CACHE PATH "ITK install directory")
+   elseif(HOST_OS MATCHES "Ubuntu22" AND HOST_OS_GCC_VERSION MATCHES "11")
+      set(ITK_DIR ${FS_PACKAGES_DIR}/itk/5.4rc01_ubuntu22 CACHE PATH "ITK install directory")
+   elseif(HOST_OS MATCHES "Ubuntu22" AND HOST_OS_GCC_VERSION MATCHES "8")
+      set(ITK_DIR ${FS_PACKAGES_DIR}/itk/4.13.2_ubuntu20 CACHE PATH "ITK install directory")
    elseif(HOST_OS MATCHES "CentOS8stream" OR HOST_OS MATCHES "CentOS8" OR HOST_OS MATCHES "Rocky8")
       set(ITK_DIR ${FS_PACKAGES_DIR}/itk/4.13.2_centos8 CACHE PATH "ITK install directory")
-   elseif(HOST_OS MATCHES "Ubuntu20" OR HOST_OS MATCHES "Ubuntu22")
+   elseif(HOST_OS MATCHES "Ubuntu20")
       set(ITK_DIR ${FS_PACKAGES_DIR}/itk/4.13.2_ubuntu20 CACHE PATH "ITK install directory")
    elseif(HOST_OS MATCHES "CentOS7")
       set(ITK_DIR ${FS_PACKAGES_DIR}/itk/4.13.2_centos7 CACHE PATH "ITK install directory")
@@ -408,20 +446,7 @@ add_subdirectory(packages)
 # symlink during install that points to the external python executable located by pybind
 option(DISTRIBUTE_FSPYTHON "Include the fspython distribution in the installation" OFF)
 
-if(DISTRIBUTE_FSPYTHON)
-  set(FSPYTHON_DIR ${FS_PACKAGES_DIR}/fspython/3.8)
-  if(EXISTS ${FSPYTHON_DIR}/bin/python3)
-    # specify the python to use
-    set(PYTHON_EXECUTABLE ${FSPYTHON_DIR}/bin/python3)
-    set(PYTHON_LIBRARY ${FSPYTHON_DIR}/lib/libpython3.8m)
-    # install the barebones python distribution
-    INSTALL(DIRECTORY ${FSPYTHON_DIR}/bin ${FSPYTHON_DIR}/lib ${FSPYTHON_DIR}/include
-      DESTINATION ${CMAKE_INSTALL_PREFIX}/python USE_SOURCE_PERMISSIONS
-    )
-  else()
-    message(FATAL_ERROR "Cannot find fspython distribution in FS_PACKAGES_DIR")
-  endif()
-endif()
+# code to install base python, e.g., 3.8, distribution moved to python/CMakeLists.txt 
 
 # initialize pybind for python wrapping
 set(PYBIND11_PYTHON_VERSION 3)
@@ -456,12 +481,12 @@ endif()
 if(NOT NO_CXX_WARN)
   if(WARNING_AS_ERROR)
     set(WARN_AS_ERROR_FLAG "-Werror")
-    if(HOST_OS MATCHES "CentOS9stream" OR HOST_OS MATCHES "CentOS9" OR HOST_OS MATCHES "CentOS8stream" OR HOST_OS MATCHES "CentOS8" OR HOST_OS MATCHES "Rocky8")
+    if(HOST_OS MATCHES "CentOS9stream" OR HOST_OS MATCHES "CentOS8" OR HOST_OS MATCHES "Rocky8")
        # -Wno-cpp needed with gcc8 for /usr/pubse/packages/vtk 7.1 compiled with older compilers
        # -Wno-restrict needed with gcc8 for ./freesurfer/mris_compute_acorr/mris_compute_acorr.cpp
        # -Wno-format-overflow needed with gcc8 for ./fresurfer/mris2rgb/mris2rgb.cpp
        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra ${WARN_AS_ERROR_FLAG} -Wno-cpp -Wno-restrict -Wno-format-overflow -Wno-sign-compare -Wno-unused-result -Wno-unused-parameter -Wno-bool-compare")
-    elseif(HOST_OS MATCHES "Ubuntu20" OR HOST_OS MATCHES "Ubuntu22")
+    elseif(HOST_OS MATCHES "Ubuntu20" OR HOST_OS MATCHES "Ubuntu22" OR HOST_OS MATCHES "CentOS9" OR HOST_OS MATCHES "CentOS8stream")
        # uses gcc8 as well
        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-builtin -Wall -Wextra ${WARN_AS_ERROR_FLAG} -Wno-cpp -Wno-restrict -Wno-format-overflow -Wno-sign-compare -Wno-unused-result -Wno-unused-parameter -Wno-bool-compare")
     elseif(HOST_OS MATCHES "MacOS-12" OR HOST_OS MATCHES "MacOS-13")
@@ -549,7 +574,16 @@ add_subdirectory(vtkutils)
 add_subdirectory(fem_elastic)
 
 # build the gems library
-add_subdirectory(gems)
+# If INTEGRATE_SAMSEG=ON,
+#   1. only integrate the python part of samseg for now
+#      python/packages/gems package is replaced with standalone samseg package
+#   2. samsegmesh2surf is not built, no need 'samseg' codes for building libkvlGEMSCommon.a
+#   3. 'samseg' codes are needed in build pass when we integrate C/C++ codes later
+#   4. 'samseg' can be added as a submodule for freesurfer to be pulled using
+#      'git clone --recurse-submodules https://github.com/yhuang43/freesurfer.git'.
+if(NOT INTEGRATE_SAMSEG)
+  add_subdirectories(samsegmesh2surf gems)  
+endif()
 
 # --------------------------------------------------
 #                      programs
@@ -651,7 +685,6 @@ add_subdirectories(
   mrisp_paint
   python
   samseg
-  samsegmesh2surf
   talairach_afd
   scripts
   tkregister2
@@ -911,6 +944,10 @@ if(EXISTS "./mri_make_bem_surfaces")
       add_subdirectories(mri_make_bem_surfaces)
       message(STATUS "Adding mri_make_bem_surfaces to build on ${HOST_OS}")
    endif()
+endif()
+
+if(FSPYTHON_INSTALL_TREE)
+   message(STATUS "For HOST_OS=${HOST_OS} FSPYTHON_INSTALL_PREFIX=${FSPYTHON_INSTALL_PREFIX}")
 endif()
 
 if(INFANT_MODULE)

@@ -503,6 +503,11 @@ static int get_option(int argc, char *argv[])
     if(sd.seg1==NULL) exit(1);
     sd.seg2 = MRIread(argv[3]);
     if(sd.seg2==NULL) exit(1);
+    int dm = MRIdimMismatch(sd.seg1, sd.seg2, 0);
+    if(dm){
+      printf("ERROR: dimension mismatch %d\n",dm);
+      exit(1);
+    }
     if(strcmp(argv[4],"embedded")!=0){
       sd.ctab = CTABreadASCII(argv[4]);
       if(sd.ctab==NULL) exit(1);
@@ -525,6 +530,29 @@ static int get_option(int argc, char *argv[])
     sd.WriteDiceDat(argv[7]);
     sd.WriteDiceTable(argv[8]);
     exit(0);
+  }
+  else if (!stricmp(option, "tpfpfn")){
+    // Compute seg of TruePos, FalsePos, and TrueNeg for given segid
+    // Results are for all segids combined into one seg
+    // -tpfpfn 2=outvol 3=manseg 4=autoseg 5=segid1 <6=segid2>
+    if(argc < 6){
+      printf("USAGE: -tpfpfn outvol manseg autoseg segid1 <segid2>\n");
+      exit(1);
+    }
+    MRI *inseg1 = MRIread(argv[3]);
+    if(! inseg1) exit(1);
+    MRI *inseg2 = MRIread(argv[4]);
+    if(! inseg2) exit(2);
+    std::vector<int> segids;
+    for(int n=5; n < argc; n++) {
+      int segid;
+      sscanf(argv[n],"%d",&segid);
+      segids.push_back(segid);
+    }
+    MRI *tpfpfn = MRItpfpfnSeg(inseg1, inseg2,segids,NULL);
+    if(!tpfpfn) exit(1);
+    int err = MRIwrite(tpfpfn,argv[2]);
+    exit(err);
   }
   else if (!stricmp(option, "slog"))
   {

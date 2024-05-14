@@ -180,7 +180,6 @@ static MRI *sdtRead(const char *fname, int read_volume);
 // these two functions are made accessible to others
 //static MRI *mghRead(const char *fname, int read_volume, int frame);
 //static int mghWrite(MRI *mri, const char *fname, int frame);
-static int mghAppend(MRI *mri, const char *fname, int frame);
 
 /********************************************/
 
@@ -708,7 +707,7 @@ MRI *mri_read(const char *fname, int type, int volume_flag, int start_frame, int
   }
   else if (type == DICOM_FILE) {  
     if (UseDCM2NIIX) {
-      std::vector<MRIFSSTRUCT> *mrifsStruct_vector = DICOMRead3(fname_copy, volume_flag);
+      std::vector<MRIFSSTRUCT> *mrifsStruct_vector = DICOMRead3(fname_copy);
       if (mrifsStruct_vector == NULL)
         return NULL;
 
@@ -748,7 +747,7 @@ MRI *mri_read(const char *fname, int type, int volume_flag, int start_frame, int
   else if (type == SIEMENS_DICOM_FILE) {
     if (UseDCM2NIIX) {
       printf("mriio.cpp: starting DICOMRead3()\n");
-      std::vector<MRIFSSTRUCT> *mrifsStruct_vector = DICOMRead3(fname_copy, volume_flag);
+      std::vector<MRIFSSTRUCT> *mrifsStruct_vector = DICOMRead3(fname_copy);
       if (mrifsStruct_vector == NULL)
         return NULL;
 
@@ -3417,7 +3416,7 @@ static MRI *get_b_info(const char *fname_passed, int read_volume, char *director
   FILE *fp;
   int nslices = 0, nt;
   int nx, ny, i;
-  ;
+
   int result;
   char fname[STRLEN];
   char extension[STRLEN];
@@ -10744,153 +10743,6 @@ static void local_buffer_to_image(BUFTYPE *buf, MRI *mri, int slice, int frame)
   }
 }
 
-static int znzTAGwriteMRIframes(znzFile fp, MRI *mri)
-{
-  long long len = 0, fstart, fend, here;
-  int fno, i;
-  MRI_FRAME *frame;
-  char *buf;
-
-  // write some extra space so that we have enough room (can't seek in zz files)
-  len = 10 * mri->nframes * sizeof(MRI_FRAME);
-  znzTAGwriteStart(fp, TAG_MRI_FRAME, &fstart, len);
-  here = znztell(fp);
-  for (fno = 0; fno < mri->nframes; fno++) {
-    frame = &mri->frames[fno];
-    znzwriteInt(frame->type, fp);
-    znzwriteFloat(frame->TE, fp);
-    znzwriteFloat(frame->TR, fp);
-    znzwriteFloat(frame->flip, fp);
-    znzwriteFloat(frame->TI, fp);
-    znzwriteFloat(frame->TD, fp);
-    znzwriteFloat(frame->TM, fp);
-    znzwriteInt(frame->sequence_type, fp);
-    znzwriteFloat(frame->echo_spacing, fp);
-    znzwriteFloat(frame->echo_train_len, fp);
-    for (i = 0; i < 3; i++) znzwriteFloat(frame->read_dir[i], fp);
-    for (i = 0; i < 3; i++) znzwriteFloat(frame->pe_dir[i], fp);
-    for (i = 0; i < 3; i++) znzwriteFloat(frame->slice_dir[i], fp);
-    znzwriteInt(frame->label, fp);
-    znzwrite(frame->name, sizeof(char), STRLEN, fp);
-    znzwriteInt(frame->dof, fp);
-    if (frame->m_ras2vox && frame->m_ras2vox->rows > 0)
-      znzWriteMatrix(fp, frame->m_ras2vox, 0);
-    else {
-      MATRIX *m = MatrixAlloc(4, 4, MATRIX_REAL);
-      znzWriteMatrix(fp, m, 0);
-      MatrixFree(&m);
-    }
-    znzwriteFloat(frame->thresh, fp);
-    znzwriteInt(frame->units, fp);
-    if (frame->type == FRAME_TYPE_DIFFUSION_AUGMENTED)  // also store diffusion info
-    {
-      znzwriteDouble(frame->DX, fp);
-      znzwriteDouble(frame->DY, fp);
-      znzwriteDouble(frame->DZ, fp);
-
-      znzwriteDouble(frame->DR, fp);
-      znzwriteDouble(frame->DP, fp);
-      znzwriteDouble(frame->DS, fp);
-      znzwriteDouble(frame->bvalue, fp);
-      znzwriteDouble(frame->TM, fp);
-
-      znzwriteLong(frame->D1_ramp, fp);
-      znzwriteLong(frame->D1_flat, fp);
-      znzwriteDouble(frame->D1_amp, fp);
-
-      znzwriteLong(frame->D2_ramp, fp);
-      znzwriteLong(frame->D2_flat, fp);
-      znzwriteDouble(frame->D2_amp, fp);
-
-      znzwriteLong(frame->D3_ramp, fp);
-      znzwriteLong(frame->D3_flat, fp);
-      znzwriteDouble(frame->D3_amp, fp);
-
-      znzwriteLong(frame->D4_ramp, fp);
-      znzwriteLong(frame->D4_flat, fp);
-      znzwriteDouble(frame->D4_amp, fp);
-    }
-  }
-  fend = znztell(fp);
-  // this assumes len is less than what just written 
-  len -= (fend - here);  // unused space
-  if (len > 0) {
-    buf = (char *)calloc(len, sizeof(char));
-    znzwrite(buf, len, sizeof(char), fp);
-    free(buf);
-  }
-  znzTAGwriteEnd(fp, fend);
-
-  return (NO_ERROR);
-}
-int znzTAGreadMRIframes(znzFile fp, MRI *mri, long len)
-{
-  int fno, i;
-  long long fstart, fend;
-  MRI_FRAME *frame;
-  char *buf;
-
-  fstart = znztell(fp);
-  for (fno = 0; fno < mri->nframes; fno++) {
-    frame = &mri->frames[fno];
-    frame->type = znzreadInt(fp);
-    frame->TE = znzreadFloat(fp);
-    frame->TR = znzreadFloat(fp);
-    frame->flip = znzreadFloat(fp);
-    frame->TI = znzreadFloat(fp);
-    frame->TD = znzreadFloat(fp);
-    frame->TM = znzreadFloat(fp);
-    frame->sequence_type = znzreadInt(fp);
-    frame->echo_spacing = znzreadFloat(fp);
-    frame->echo_train_len = znzreadFloat(fp);
-    for (i = 0; i < 3; i++) frame->read_dir[i] = znzreadFloat(fp);
-    for (i = 0; i < 3; i++) frame->pe_dir[i] = znzreadFloat(fp);
-    for (i = 0; i < 3; i++) frame->slice_dir[i] = znzreadFloat(fp);
-    frame->label = znzreadInt(fp);
-    znzread(frame->name, sizeof(char), STRLEN, fp);
-    frame->dof = znzreadInt(fp);
-    frame->m_ras2vox = znzReadMatrix(fp);
-
-    frame->thresh = znzreadFloat(fp);
-    frame->units = znzreadInt(fp);
-    if (frame->type == FRAME_TYPE_DIFFUSION_AUGMENTED) {
-      frame->DX = znzreadDouble(fp);
-      frame->DY = znzreadDouble(fp);
-      frame->DZ = znzreadDouble(fp);
-
-      frame->DR = znzreadDouble(fp);
-      frame->DP = znzreadDouble(fp);
-      frame->DS = znzreadDouble(fp);
-      frame->bvalue = znzreadDouble(fp);
-      frame->TM = znzreadDouble(fp);
-
-      frame->D1_ramp = znzreadLong(fp);
-      frame->D1_flat = znzreadLong(fp);
-      frame->D1_amp = znzreadDouble(fp);
-
-      frame->D2_ramp = znzreadLong(fp);
-      frame->D2_flat = znzreadLong(fp);
-      frame->D2_amp = znzreadDouble(fp);
-
-      frame->D3_ramp = znzreadLong(fp);
-      frame->D3_flat = znzreadLong(fp);
-      frame->D3_amp = znzreadDouble(fp);
-
-      frame->D4_ramp = znzreadLong(fp);
-      frame->D4_flat = znzreadLong(fp);
-      frame->D4_amp = znzreadDouble(fp);
-    }
-  }
-
-  fend = znztell(fp);
-  len -= (fend - fstart);
-  if (len > 0) {
-    buf = (char *)calloc(len, sizeof(char));
-    znzread(buf, len, sizeof(char), fp);
-    free(buf);
-  }
-  return (NO_ERROR);
-}
 
 #define UNUSED_SPACE_SIZE 256
 #define USED_SPACE_SIZE (3 * sizeof(float) + 4 * 3 * sizeof(float))
@@ -11907,189 +11759,6 @@ int MRIwriteInfo(MRI *mri, const char *fpref)
   return (NO_ERROR);
 }
 
-/*-----------------------------------------------------
-  Parameters:
-
-  Returns value:
-
-  Description
-  Write an MRI header and a set of data files to
-  the directory specified by 'fpref'
-  ------------------------------------------------------*/
-int MRIappend(MRI *mri, const char *fpref)
-{
-  int type, frame;
-  char fname[STRLEN];
-
-  MRIunpackFileName(fpref, &frame, &type, fname);
-  if (type == MRI_MGH_FILE)
-    return (mghAppend(mri, fname, frame));
-  else {
-    errno = 0;
-    ErrorReturn(ERROR_UNSUPPORTED, (ERROR_UNSUPPORTED, "MRIappend(%s): file type not supported", fname));
-  }
-
-  return (NO_ERROR);
-}
-
-static int mghAppend(MRI *mri, const char *fname, int frame)
-{
-  FILE *fp;
-  int start_frame, end_frame, x, y, z, width, height, depth, nframes;
-
-  if (frame >= 0)
-    start_frame = end_frame = frame;
-  else {
-    start_frame = 0;
-    end_frame = mri->nframes - 1;
-  }
-  fp = fopen(fname, "rb");
-  if (!fp) /* doesn't exist */
-    return (mghWrite(mri, fname, frame));
-  fclose(fp);
-  fp = fopen(fname, "r+b");
-  if (!fp) {
-    errno = 0;
-    ErrorReturn(ERROR_BADPARM, (ERROR_BADPARM, "mghAppend(%s, %d): could not open file", fname, frame));
-  }
-
-  /* WARNING - this is dependent on the order of writing in mghWrite */
-  width = mri->width;
-  height = mri->height;
-  depth = mri->depth;
-  fseek(fp, 4 * sizeof(int), SEEK_SET);
-  nframes = freadInt(fp);
-  fseek(fp, 4 * sizeof(int), SEEK_SET);
-  fwriteInt(nframes + end_frame - start_frame + 1, fp);
-  fseek(fp, 0, SEEK_END);
-
-  for (frame = start_frame; frame <= end_frame; frame++) {
-    for (z = 0; z < depth; z++) {
-      for (y = 0; y < height; y++) {
-        switch (mri->type) {
-          case MRI_FLOAT:
-            for (x = 0; x < width; x++) {
-              fwriteFloat(MRIFseq_vox(mri, x, y, z, frame), fp);
-            }
-            break;
-          case MRI_UCHAR:
-            if ((int)fwrite(&MRIseq_vox(mri, 0, y, z, frame), sizeof(BUFTYPE), width, fp) != width) {
-              errno = 0;
-              ErrorReturn(ERROR_BADFILE, (ERROR_BADFILE, "mghAppend: could not write %d bytes to %s", width, fname));
-            }
-            break;
-          default:
-            errno = 0;
-            ErrorReturn(ERROR_UNSUPPORTED, (ERROR_UNSUPPORTED, "mghAppend: unsupported type %d", mri->type));
-            break;
-        }
-      }
-    }
-  }
-
-  fclose(fp);
-  return (NO_ERROR);
-}
-
-/*-----------------------------------------------------
-  Parameters:
-
-  Returns value:
-
-  Description
-  ------------------------------------------------------*/
-int MRIunpackFileName(const char *inFname, int *pframe, int *ptype, char *outFname)
-{
-  char *number = NULL, *at = NULL, buf[STRLEN];
-  struct stat stat_buf;
-
-  strcpy(outFname, inFname);
-  if (MRIIO_Strip_Pound)
-    number = strrchr(outFname, '#');
-  else
-    number = NULL;
-
-  at = strrchr(outFname, '@');
-
-  if (at) *at = '\0';
-
-  if (number) /* '#' in filename indicates frame # */
-  {
-    if (sscanf(number + 1, "%d", pframe) < 1) *pframe = -1;
-    *number = 0;
-  }
-  else
-    *pframe = -1;
-
-  if (at) {
-    at = StrUpper(strcpy(buf, at + 1));
-    if (!strcmp(at, "MNC"))
-      *ptype = MRI_MINC_FILE;
-    else if (!strcmp(at, "MINC"))
-      *ptype = MRI_MINC_FILE;
-    else if (!strcmp(at, "BRIK"))
-      *ptype = BRIK_FILE;
-    else if (!strcmp(at, "SIEMENS"))
-      *ptype = SIEMENS_FILE;
-    else if (!strcmp(at, "MGH"))
-      *ptype = MRI_MGH_FILE;
-    else if (!strcmp(at, "MR"))
-      *ptype = GENESIS_FILE;
-    else if (!strcmp(at, "GE"))
-      *ptype = GE_LX_FILE;
-    else if (!strcmp(at, "IMG"))
-      *ptype = MRI_ANALYZE_FILE;
-    else if (!strcmp(at, "COR"))
-      *ptype = MRI_CORONAL_SLICE_DIRECTORY;
-    else if (!strcmp(at, "BSHORT"))
-      *ptype = BSHORT_FILE;
-    else if (!strcmp(at, "SDT"))
-      *ptype = SDT_FILE;
-    else {
-      errno = 0;
-      ErrorExit(ERROR_UNSUPPORTED, "unknown file type %s", at);
-    }
-  }
-  else /* no '@' found */
-  {
-    *ptype = -1;
-
-    if (is_genesis(outFname))
-      *ptype = GENESIS_FILE;
-    else if (is_ge_lx(outFname))
-      *ptype = GE_LX_FILE;
-    else if (is_brik(outFname))
-      *ptype = BRIK_FILE;
-    else if (is_siemens(outFname))
-      *ptype = SIEMENS_FILE;
-    else if (is_analyze(outFname))
-      *ptype = MRI_ANALYZE_FILE;
-    else if (is_signa(outFname))
-      *ptype = SIGNA_FILE;
-    else if (is_sdt(outFname))
-      *ptype = SDT_FILE;
-    else if (is_mgh(outFname))
-      *ptype = MRI_MGH_FILE;
-    else if (is_mnc(outFname))
-      *ptype = MRI_MINC_FILE;
-    else if (is_bshort(outFname))
-      *ptype = BSHORT_FILE;
-    else {
-      if (stat(outFname, &stat_buf) < 0) {
-        errno = 0;
-        ErrorReturn(ERROR_BADFILE, (ERROR_BAD_FILE, "can't stat file %s", outFname));
-      }
-      if (S_ISDIR(stat_buf.st_mode)) *ptype = MRI_CORONAL_SLICE_DIRECTORY;
-    }
-
-    if (*ptype == -1) {
-      errno = 0;
-      ErrorReturn(ERROR_BADPARM, (ERROR_BADPARM, "unrecognized file type for file %s", outFname));
-    }
-  }
-
-  return (NO_ERROR);
-}
 
 /*---------------------------------------------------------------
   MRIwriteAnyFormat() - saves the data in the given mri structure to
@@ -12402,7 +12071,7 @@ void MRITAGread(MRI *mri, znzFile fp, const char *fname, bool niftiheaderext, lo
     if (tag == 0)
     {
       if (Gdiag & DIAG_INFO)
-	printf("[DEBUG] MRITAGread(): remaining taglen = %lld (tag = %d, len = %lld)\n", mgztaglen, tag, len);
+	printf("[DEBUG] MRITAGread(): remaining taglen = %lld (tag = %d)\n", mgztaglen, tag);
       
       break;
     }
@@ -12578,7 +12247,11 @@ void MRITAGread(MRI *mri, znzFile fp, const char *fname, bool niftiheaderext, lo
       // mgztaglen may not reach 0 because the extension is padded with zeros to be multiple of 16 bytes
       // check if there is at least 12 bytes (sizeof(long long) + sizeof(int)) left 
       if (mgztaglen < len_tagheader)
+      {
+	if (Gdiag & DIAG_INFO)
+	  printf("[DEBUG] MRITAGread(): remaining taglen = %lld\n", mgztaglen);
         break;
+      }
     }
   }    // while (1)
 } // end MRITAGread()
@@ -12626,6 +12299,11 @@ void MRITAGwrite(MRI *mri, znzFile fp, bool niftiheaderext)
       fstagsio.write_gcamorph_labels(mri->width, mri->height, mri->depth, mri->gcamorphLabel);
     }
 
+    // write end tag for nifti header extension
+    // this needs to be the last tag (TAG_END_NIIHDREXTENSION)
+    if (niftiheaderext)
+      fstagsio.write_endtag();
+    
     return;
   }
 
@@ -12675,7 +12353,9 @@ void MRITAGwrite(MRI *mri, znzFile fp, bool niftiheaderext)
     // mri->FieldStrength is written to file in native endian, needs to be read in native endian
     fstagsio.write_tag(TAG_FIELDSTRENGTH, (void *)(&mri->FieldStrength), sizeof(mri->FieldStrength));
 
-  fstagsio.write_mri_frames(mri);
+  if (mri->nframes > 1 ||
+      (mri->frames[0].label != 0 || !FZERO(mri->frames[0].thresh)))
+    fstagsio.write_mri_frames(mri);
 
   if (mri->ct) {
     fstagsio.write_old_colortable(mri->ct);
@@ -12684,6 +12364,11 @@ void MRITAGwrite(MRI *mri, znzFile fp, bool niftiheaderext)
   // write other tags
   for (int i = 0; i < mri->ncmds; i++)
     fstagsio.write_tag(TAG_CMDLINE, mri->cmdlines[i], strlen(mri->cmdlines[i]) + 1);
+
+  // write end tag for nifti header extension
+  // this needs to be the last tag (TAG_END_NIIHDREXTENSION)
+  if (niftiheaderext)
+    fstagsio.write_endtag();
 } // end MRITAGwrite()
 
 
@@ -12699,7 +12384,7 @@ long long __getMRITAGlength(MRI *mri, bool niftiheaderext)
   if (mri->warpFieldFormat != WarpfieldDTFMT::WARPFIELD_DTFMT_UNKNOWN)
   {
     // output TAG_GCAMORPH_GEOM
-    taglen = FStagsIO::getlen_gcamorph_geom(niftiheaderext);
+    taglen = FStagsIO::getlen_gcamorph_geom((mri->gcamorph_image_vg).fname, (mri->gcamorph_atlas_vg).fname, niftiheaderext);
     dlen += taglen;
     if (Gdiag & DIAG_INFO)
       printf("[DEBUG] __getMRITAGlength(): +%-6lld, dlen = %-6lld (TAG = %-2d)\n", taglen, dlen, TAG_GCAMORPH_GEOM);
@@ -12728,6 +12413,15 @@ long long __getMRITAGlength(MRI *mri, bool niftiheaderext)
         printf("[DEBUG] __getMRITAGlength(): +%-6lld, dlen = %-6lld (TAG = %-2d)\n", taglen, dlen, TAG_GCAMORPH_LABELS);
     }
 
+    if (niftiheaderext)
+    {
+      // TAG_END_NIIHDREXTENSION
+      taglen = FStagsIO::getlen_endtag();
+      dlen += taglen;
+      if (Gdiag & DIAG_INFO)
+        printf("[DEBUG] __getMRITAGlength(): +%-6lld, dlen = %-6lld (TAG = %-2d)\n", taglen, dlen, TAG_END_NIIHDREXTENSION);    
+    }
+  
     return dlen;
   }
 
@@ -12806,10 +12500,14 @@ long long __getMRITAGlength(MRI *mri, bool niftiheaderext)
       printf("[DEBUG] __getMRITAGlength(): +%-6lld, dlen = %-6lld (TAG = %-2d)\n", taglen, dlen, TAG_FIELDSTRENGTH);
   }
 
-  taglen = FStagsIO::getlen_mri_frames(mri);
-  dlen += taglen;
-  if (Gdiag & DIAG_INFO)
-    printf("[DEBUG] __getMRITAGlength(): +%-6lld, dlen = %-6lld (TAG = %-2d)\n", taglen, dlen, TAG_MRI_FRAME);
+  if (mri->nframes > 1 ||
+      (mri->frames[0].label != 0 || !FZERO(mri->frames[0].thresh)))
+  {    
+    taglen = FStagsIO::getlen_mri_frames(mri, niftiheaderext);
+    dlen += taglen;
+    if (Gdiag & DIAG_INFO)
+      printf("[DEBUG] __getMRITAGlength(): +%-6lld, dlen = %-6lld (TAG = %-2d)\n", taglen, dlen, TAG_MRI_FRAME);
+  }
 
   if (mri->ct)
   {
@@ -12826,6 +12524,15 @@ long long __getMRITAGlength(MRI *mri, bool niftiheaderext)
     dlen += taglen;
     if (Gdiag & DIAG_INFO)
       printf("[DEBUG] __getMRITAGlength(): +%-6lld, dlen = %-6lld (TAG = %-2d)\n", taglen, dlen, TAG_CMDLINE);
+  }
+
+  if (niftiheaderext)
+  {
+    // TAG_END_NIIHDREXTENSION
+    taglen = FStagsIO::getlen_endtag();
+    dlen += taglen;
+    if (Gdiag & DIAG_INFO)
+      printf("[DEBUG] __getMRITAGlength(): +%-6lld, dlen = %-6lld (TAG = %-2d)\n", taglen, dlen, TAG_END_NIIHDREXTENSION);    
   }
 
   return dlen;

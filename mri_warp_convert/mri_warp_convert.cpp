@@ -73,7 +73,7 @@ GCAM* readM3Z(const string& warp_file)
   return gcam;
 }
 
-// input is MRI_MGH_FILE
+// input is MRI_MGH_FILE/NII_FILE
 GCAM *readMGZWarp(const string& mgzwarpfile)
 {
   Warpfield *warpfield = new Warpfield();
@@ -423,7 +423,8 @@ void writeM3Z(const string& fname, GCAM *gcam, bool downsample=false)
 // Write an m3z file. Just calls down to GCAMwrite
 {
   GCA_MORPH* out = downsample ? GCAMdownsample2(gcam) : gcam;
-  GCAMwrite(out, fname.c_str());
+  int err = GCAMwrite(out, fname.c_str());
+  if(err) exit(1);
   if (downsample) {
       GCAMfree(&out);
   }
@@ -624,6 +625,7 @@ int main(int argc, char *argv[])
 	printf("ERROR: --inspm needs source/atlas geometry, use --insrcgeom or -g to specify\n");
 	exit(1);
       }
+      printf("inwarpformat set to %s\n",P.in_warpformat.c_str());
       gcam = readSPM(P.in_warp.c_str(),P.in_src_geom);
       break;
     case filetypes::ITK:
@@ -776,6 +778,7 @@ static int parseNextCommand(int argc, char *argv[], Parameters & P)
 
     P.in_warp = string(argv[1]);
     P.in_type = filetypes::SPM;
+    P.in_warpformat = string("abs-ras");
     nargs = 1;
     cout << "--inspm: " << P.in_warp << " input SPM warp." << endl;
   }
@@ -966,6 +969,12 @@ static int parseNextCommand(int argc, char *argv[], Parameters & P)
     nargs = 1;
     cout << "--outwarpformat: " << P.out_warpformat
          << " (specify output warp data format: abs-crs (default), disp-crs, abs-ras, or disp-ras)" << endl;
+  } 
+  else if (!strcmp(option, "VG-THRESH"))
+  {
+    sscanf(argv[1],"%lf",&vg_isEqual_Threshold);
+    printf("Setting vg_isEqual_Threshold to %lf\n",vg_isEqual_Threshold);
+    nargs = 1;
   } 
   else if (!strcmp(option, "HELP") )
   {

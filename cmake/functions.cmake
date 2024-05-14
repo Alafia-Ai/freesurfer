@@ -92,6 +92,19 @@ function(install_symlinks)
   endforeach()
 endfunction()
 
+function(install_symlinks_fspython_tree)
+  cmake_parse_arguments(INSTALL "NMR_ONLY" "DESTINATION;TYPE" "" ${ARGN})
+  string(TOUPPER ${INSTALL_TYPE} INSTALL_TYPE)
+  if(INSTALL_NMR_ONLY)
+    set(COMPONENT_ARGS COMPONENT nmr EXCLUDE_FROM_ALL)
+  endif()
+  foreach(arg ${INSTALL_UNPARSED_ARGUMENTS})
+    get_filename_component(BASENAME ${arg} NAME)
+    get_filename_component(ABS_PATH ${arg} REALPATH)
+    install(${INSTALL_TYPE} ${ABS_PATH} DESTINATION ../fspython/${INSTALL_DESTINATION} RENAME ${BASENAME} ${COMPONENT_ARGS})
+  endforeach()
+endfunction()
+
 
 # install_tarball(<tarball> DESTINATION <dir>)
 # Use this to extract a tarball to the provided install destination
@@ -211,6 +224,22 @@ function(install_directories)
   endforeach()
 endfunction()
 
+function(install_directories_fspython_tree)
+  cmake_parse_arguments(INSTALL "" "DESTINATION" "" ${ARGN})
+  foreach(arg ${INSTALL_UNPARSED_ARGUMENTS})
+    get_filename_component(BASENAME ${arg} NAME)
+    get_filename_component(ABS_PATH ${arg} REALPATH)
+    install(CODE "
+      message(STATUS \"Installing directory (with rsync): ${CMAKE_INSTALL_PREFIX}/../fspython/${INSTALL_DESTINATION}/${BASENAME}\")
+      execute_process(COMMAND bash -c \"mkdir -p ../fspython/${INSTALL_DESTINATION} && rsync -rtL ${ABS_PATH} ${CMAKE_INSTALL_PREFIX}/../fspython/${INSTALL_DESTINATION}/\" RESULT_VARIABLE retcode)
+      if(NOT \${retcode} STREQUAL 0)
+        message(FATAL_ERROR \"Could not install directory to ${TARGET}\")
+      endif()"
+    )
+  endforeach()
+endfunction()
+
+
 # symlink(<target> <linkname>)
 # Creates a symlink at install time
 function(symlink TARGET LINKNAME)
@@ -234,7 +263,6 @@ function(add_test_script)
   set(TEST_CMD "${TEST_CMD} ${CMAKE_COMMAND} --build ${CMAKE_CURRENT_BINARY_DIR} --target install &&")
   add_test(${TEST_NAME} bash -c "${TEST_CMD} ${CMAKE_CURRENT_SOURCE_DIR}/${TEST_SCRIPT}")
 endfunction()
-
 
 # add_test_executable(<target> <sources>)
 # Adds an executable to the test framework that only gets built by the test target.
@@ -280,6 +308,72 @@ function(install_pyscript)
       message(STATUS \"Configuring python wrapper: ${CMAKE_INSTALL_PREFIX}/bin/${SCRIPT}\")
       set(SCRIPTNAME ${SCRIPT})
       configure_file(${CMAKE_SOURCE_DIR}/python/wrapper ${CMAKE_INSTALL_PREFIX}/bin/${SCRIPT} @ONLY)"
+    )
+  endforeach()
+endfunction()
+
+function(install_pyscript_fspython_tree)
+  foreach(SCRIPT ${ARGN})
+    install(FILES ${SCRIPT} DESTINATION ../fspython/python/scripts)
+    install(CODE "
+      message(STATUS \"Configuring python wrapper: ${CMAKE_INSTALL_PREFIX}/../fspython/bin/${SCRIPT}\")
+      set(SCRIPTNAME ${SCRIPT})
+      configure_file(${CMAKE_SOURCE_DIR}/python/wrapper_fspython_tree ${CMAKE_INSTALL_PREFIX}/../fspython/bin/${SCRIPT} @ONLY)"
+    )
+  endforeach()
+endfunction()
+
+# get_package_dir(packagename packagedir)
+# retrieve package direcotry
+# ??? todo: this function needs work, it is not working ???
+function(get_package_dir PACKAGENAME PACKAGEDIR)
+  install(CODE "
+    message(STATUS \"get package ${PACKAGENAME} directory\")
+    execute_process(COMMAND package_dir=$(FREESURFER_HOME=${CMAKE_INSTALL_PREFIX} ${CMAKE_INSTALL_PREFIX}/bin/fspython -c \"import ${PACKAGENAME}; print(${PACKAGENAME}.__path__[0])\"))
+    message(STATUS \"get package ${PACKAGENAME} directory ${package_dir}\")
+    set(PACKAGEDIR ${package_dir})"
+    
+
+    #execute_process(COMMAND FREESURFER_HOME=${CMAKE_INSTALL_PREFIX} ${CMAKE_INSTALL_PREFIX}/bin/fspython -c \"import ${PACKAGENAME}; print(${PACKAGENAME}.__path__[0])\" OUTPUT_VARIABLE PACKAGEDIR)
+    #message(STATUS \"get package ${PACKAGENAME} directory OUTPUT_VARIABLE ${PACKAGEDIR}\")
+    )
+endfunction()
+
+
+# config_fspythonwrapper(<scripts>)
+# This function creates the fspython wrapper scripts in $FREESURFER_HOME/bin
+# for actual scripts in python/scripts.
+function(config_fspythonwrapper)
+  foreach(SCRIPT ${ARGN})
+    install(CODE "
+      message(STATUS \"Configuring fspython wrapper: ${CMAKE_INSTALL_PREFIX}/bin/${SCRIPT}\")
+      set(SCRIPTNAME ${SCRIPT})
+      configure_file(${CMAKE_SOURCE_DIR}/python/wrapper ${CMAKE_INSTALL_PREFIX}/bin/${SCRIPT} @ONLY)"
+    )
+  endforeach()
+endfunction()
+
+function(config_fspythonwrapper_fspython_tree)
+  foreach(SCRIPT ${ARGN})
+    install(CODE "
+      message(STATUS \"Configuring fspython wrapper: ${CMAKE_INSTALL_PREFIX}/../fspython/bin/${SCRIPT}\")
+      set(SCRIPTNAME ${SCRIPT})
+      configure_file(${CMAKE_SOURCE_DIR}/python/wrapper ${CMAKE_INSTALL_PREFIX}/../fspython/bin/${SCRIPT} @ONLY)"
+    )
+  endforeach()
+endfunction()
+
+# remove the files given
+function(remove_files)
+  foreach(SCRIPT ${ARGN})
+    install(CODE "
+      if(EXISTS ${SCRIPT})
+        message(STATUS \"Removing: ${SCRIPT}\")
+        execute_process(COMMAND bash -c \"rm -f ${SCRIPT}\" RESULT_VARIABLE retcode)
+        if(NOT \${retcode} STREQUAL 0)
+          message(FATAL_ERROR \"Could not remove ${SCRIPT}\")
+        endif()
+      endif()"
     )
   endforeach()
 endfunction()

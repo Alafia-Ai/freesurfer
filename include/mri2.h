@@ -166,7 +166,11 @@ MRI *MRImatchSegs(MRI *seg, int *seglist, int nsegs, int MaskId, MRI *mask);
 HISTOGRAM *HISTOseg(MRI *seg, int segid, MRI *vol, double bmin, double bmax, double bdelta);
 int QuadEulerCharChange(MRI *vol, MRI *mask, int c, int r, int s);
 int QuadEulerCharChangeTest(int ForceFail);
+int QuadEulerCharChangeTest2(int TurnOnTestVoxel);
 int QuadEulerCharChangeCheckReorder(MRI *mri, const char *testname, int decExpected);
+MRI *MRIvolTopoFix(MRI *binseg0, int onval, MRI *binseg, int ndilationsmax=1000, int nerodesmax=1000, int ntopoerodesmax=1000);
+int MRIvolTopoErodeOne(MRI *binvol, const MRI *keepmask);
+int MRIvolTopoDilateOne(MRI *binvol, int onval=1);
 
 MRI *MRIfindBrightNonWM(MRI *mri_T1, MRI *mri_wm);
 MRI *MRIzconcat(MRI *mri1, MRI *mri2, int nskip, MRI *out);
@@ -175,6 +179,9 @@ MRI *MRIapplyEdits(MRI *newauto, MRI *oldauto, MRI *manedit, MRI *outvol);
 int MRIfixEntoWM(MRI *invol, const MRI *entowm, int Level, double lhVal, double rhVal, int ACJ=0);
 MRI *LabelAmygalaCortalJunction(MRI *seg, int topo, MRI *out);
 MRI *MRIshiftDim(MRI *src, int dim, int nshift, int wrap);
+MRI *MRIcropSegHemi(MRI *seg0, int hemi, int cFoV, int rFoV, int sFoV);
+MRI_REGION *MRIcropToFoV(MRI *mask, int cFoV, int rFoV, int sFoV, double thresh=0.5);
+MRI *MRItpfpfnSeg(MRI *manseg, MRI *autoseg, std::vector<int> segids, MRI *tpfpfn);
 
 /*!
   \fn class FixSubCortMassHA

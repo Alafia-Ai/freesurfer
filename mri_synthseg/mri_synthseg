@@ -49,9 +49,12 @@ def main():
     parser.add_argument("--post", help="(optional) Posteriors output(s). Must be a folder if --i designates a folder.")
     parser.add_argument("--resample", help="(optional) Resampled image(s). Must be a folder if --i is a folder.")
     parser.add_argument("--crop", nargs='+', type=int, help="(optional) Only analyse an image patch of the given size.")
+    parser.add_argument("--autocrop", action="store_true", help="(optional) Ignore background voxels in FOV.")
     parser.add_argument("--threads", type=int, default=1, help="(optional) Number of cores to be used. Default is 1.")
     parser.add_argument("--cpu", action="store_true", help="(optional) Enforce running with CPU rather than GPU.")
     parser.add_argument("--v1", action="store_true", help="(optional) Use SynthSeg 1.0 (updated 25/06/22).")
+    parser.add_argument("--keepgeom", action="store_true", help="Force output geometry to be the same as input")
+    parser.add_argument("--addctab", action="store_true", help="Embed colortable into seg output")
     parser.add_argument("--photo", help="(optional) Photo-SynthSeg: segment 3D reconstructed stack of coronal dissection photos of the cerebrum; must be left, right, or both")
 
     # check for no arguments
@@ -155,8 +158,12 @@ def main():
     tf.config.threading.set_inter_op_parallelism_threads(args.threads)
     tf.config.threading.set_intra_op_parallelism_threads(args.threads)
 
+    lut_file = os.path.join(os.environ.get('FREESURFER_HOME'),'FreeSurferColorLUT.txt')
+    labels = None
+    if(args.addctab): labels = sf.load_label_lookup(lut_file)
 
-
+    if args.crop is not None and args.autocrop:
+        sf.system.fatal('Argument --autocrop cannot be used with --crop.')
 
     # run prediction
     predict(
@@ -185,6 +192,9 @@ def main():
         cropping=args.crop,
         topology_classes=topology_classes,
         ct=args.ct,
+        keepgeom=args.keepgeom,
+        labels=labels,
+        autocrop=args.autocrop
     )
 
 
@@ -217,7 +227,10 @@ def predict(path_images,
             names_qc,
             cropping,
             topology_classes,
-            ct):
+            ct,
+            keepgeom=False,
+            labels=None,
+            autocrop=False):
     '''
     Prediction pipeline.
     '''
@@ -304,7 +317,8 @@ def predict(path_images,
                                                                          ct=ct,
                                                                          crop=cropping,
                                                                          min_pad=min_pad,
-                                                                         path_resample=path_resampled[i])
+                                                                         path_resample=path_resampled[i],
+                                                                         autocrop=autocrop)
 
             # prediction
             shape_input = add_axis(np.array(image.shape[1:-1]))
@@ -344,7 +358,9 @@ def predict(path_images,
                                                    v1=(v1 or (photo is not None)))
 
             # write predictions to disc
-            save_volume(seg, aff, h, path_segmentations[i], dtype='int32')
+            sfimage = None;
+            if(keepgeom): sfimage = sf.load_volume(path_images[i]);
+            save_volume(seg, aff, h, path_segmentations[i], dtype='int32',resample_like_image=sfimage,labels=labels)
             if path_posteriors[i] is not None:
                 save_volume(posteriors, aff, h, path_posteriors[i], dtype='float32')
 
@@ -397,6 +413,7 @@ def predict(path_images,
             print(path_error_image)
         sys.exit(1)
     else:
+        print('\n#@# mri_synthseg vmpeak ',sf.system.vmpeak());
         print('\nIf you use this tool in a publication, please cite:')
         print('SynthSeg: Segmentation of brain MRI scans of any contrast and resolution without retraining')
         print('B. Billot, D.N. Greve, O. Puonti, A. Thielscher, K. Van Leemput, B. Fischl, A.V. Dalca, J.E. Iglesias')
@@ -548,7 +565,7 @@ def prepare_output_files(path_images, out_seg, out_posteriors, out_resampled, ou
            out_qc, unique_qc_file
 
 
-def preprocess(path_image, ct, n_levels=5, crop=None, min_pad=None, path_resample=None):
+def preprocess(path_image, ct, n_levels=5, crop=None, min_pad=None, path_resample=None, autocrop=False):
 
     # read image and corresponding info
     im, _, aff, n_dims, n_channels, h, im_res = get_volume_info(path_image, True)
@@ -586,6 +603,22 @@ def preprocess(path_image, ct, n_levels=5, crop=None, min_pad=None, path_resampl
     if ct:
         im = np.clip(im, 0, 80)
     im = rescale_volume(im, new_min=0, new_max=1, min_percentile=0.5, max_percentile=99.5)
+
+    # Automatically crop to bounding box of non-zero stuff in the re-normalised image
+    if autocrop and crop_idx is None:
+        nz_locs = np.argwhere(im > 0)
+        min_indices = np.min(nz_locs, axis=0)
+        max_indices = np.max(nz_locs, axis=0)
+        nz_crop = max_indices - min_indices + 2
+        crop_shape = [find_closest_number_divisible_by_m(s, 2 ** n_levels, 'higher') for s in nz_crop]
+        half_dim_diff = np.floor_divide([crop_shape[i] - nz_crop[i] for i in range(n_dims)], 2)
+        min_crop_idx = np.maximum(min_indices - half_dim_diff, 0)
+        max_crop_idx = np.minimum(min_crop_idx + crop_shape, im.shape[:n_dims])
+        crop_idx = np.concatenate([np.array(min_crop_idx), np.array(max_crop_idx)])
+        if n_dims == 2:
+            im = im[crop_idx[0]: crop_idx[2], crop_idx[1]: crop_idx[3], ...]
+        elif n_dims == 3:
+            im = im[crop_idx[0]: crop_idx[3], crop_idx[1]: crop_idx[4], crop_idx[2]: crop_idx[5], ...]
 
     # pad image
     input_shape = im.shape[:n_dims]
@@ -1191,7 +1224,7 @@ def conv_enc(nb_features,
 
         if batch_norm is not None:
             name = '%s_bn_down_%d' % (prefix, level)
-            last_tensor = keras.layers.BatchNormalization(axis=batch_norm, name=name)(last_tensor)
+            last_tensor = keras.layers.BatchNormalization(axis=batch_norm, name=name, fused=False)(last_tensor)
 
         # max pool if we're not at the last level
         if level < (nb_levels - 1):
@@ -1326,7 +1359,7 @@ def conv_dec(nb_features,
 
         if batch_norm is not None:
             name = '%s_bn_up_%d' % (prefix, level)
-            last_tensor = keras.layers.BatchNormalization(axis=batch_norm, name=name)(last_tensor)
+            last_tensor = keras.layers.BatchNormalization(axis=batch_norm, name=name, fused=False)(last_tensor)
 
     # Compute likelyhood prediction (no activation yet)
     name = '%s_likelihood' % prefix
@@ -1403,7 +1436,7 @@ def load_volume(path_volume, im_only=True, squeeze=True, dtype=None, aff_ref=Non
         return volume, aff, header
 
 
-def save_volume(volume, aff, header, path, res=None, dtype=None, n_dims=3):
+def save_volume(volume, aff, header, path, res=None, dtype=None, n_dims=3, resample_like_image=None, labels=None):
     """
     Save a volume.
     :param volume: volume to save
@@ -1440,7 +1473,23 @@ def save_volume(volume, aff, header, path, res=None, dtype=None, n_dims=3):
             res = reformat_to_list(res, length=n_dims, dtype=None)
             nifty.header.set_zooms(res)
         nib.save(nifty, path)
-
+        if(resample_like_image is not None or labels is not None):
+            # This is a total hack to make the output take the same
+            # geom as the input and/or add a colortable to the
+            # output. Surfa-reads in the file writen by nibabel above,
+            # then reslices using the surface command to look like the
+            # resample_like_image (should be the original image as read
+            # by surf), then uses surfa to write out the volume. Should
+            # write the nibabel to some temp volume.
+            src = sf.load_volume(path); # re-read the nibabel volume with surfa
+            if(resample_like_image is not None):
+                res = resample_like_image._geometry.voxsize
+                # Could only do this if not iso1mm, but not sure if dim is right
+                print(f'Reslicing to have same geom as the input {res}')
+                newsrc = src.resample_like(resample_like_image, method='nearest')
+            else: newsrc = src;
+            if(labels is not None): newsrc.labels = labels;
+            newsrc.save(path);
 
 def get_volume_info(path_volume, return_volume=False, aff_ref=None, max_channels=10):
     """
@@ -1592,7 +1641,7 @@ def reformat_to_list(var, length=None, load_as_numpy=False, dtype=None):
     if var is None:
         return None
     var = load_array_if_path(var, load_as_numpy=load_as_numpy)
-    if isinstance(var, (int, float, np.int8, np.int16, np.int32, np.int64, np.float16, np.float32, np.float64, np.float128)):
+    if isinstance(var, (int, float, np.int8, np.int16, np.int32, np.int64, np.float16, np.float32, np.float64)):
         var = [var]
     elif isinstance(var, tuple):
         var = list(var)

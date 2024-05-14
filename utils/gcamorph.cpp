@@ -356,7 +356,7 @@ int GCAMwrite(const GCA_MORPH *gcam, const char *fname)
   int type = mri_identify(fname);
   if (type == MGH_MORPH)
     return __m3zWrite(gcam, fname);
-  else if (type == MRI_MGH_FILE)
+  else if (type == MRI_MGH_FILE || type == NII_FILE)
     return __warpfieldWrite(gcam, fname);
 
   return ERROR_BADPARM;  
@@ -1119,8 +1119,12 @@ GCA_MORPH *GCAMread(const char *fname)
   int type = mri_identify(fname);
   if (type == MGH_MORPH)
     gcam = __m3zRead(fname);
-  else if (type == MRI_MGH_FILE)
+  else if (type == MRI_MGH_FILE || type == NII_FILE)
+  {
     gcam =  __warpfieldRead(fname);
+    if (gcam != NULL && gcam->spacing == 0)
+      gcam->spacing = 1;
+  }
 
   if (gcam == NULL)
     return NULL;
@@ -4308,10 +4312,8 @@ int GCAMmorphPlistToSource(int N, float *points_in, GCA_MORPH *gcam, float *poin
 
 MRI *GCAMmorphToAtlas(MRI *mri_src, GCA_MORPH *gcam, MRI *mri_morphed, int frame, int sample_type)
 {
-  int width, height, depth, x, y, z, start_frame, end_frame;
-  int out_of_gcam;
-  float xd, yd, zd;
-  double val, xoff, yoff, zoff;
+  int width, height, depth, start_frame, end_frame;
+  double xoff, yoff, zoff;
 
   if (frame >= 0 && frame < mri_src->nframes) {
     start_frame = end_frame = frame;
@@ -4352,9 +4354,14 @@ MRI *GCAMmorphToAtlas(MRI *mri_src, GCA_MORPH *gcam, MRI *mri_morphed, int frame
   }
 
   // x, y, z are the col, row, and slice (and xyz) in the gcam/target volume
-  for (x = 0; x < width; x++) {
-    for (y = 0; y < height; y++) {
-      for (z = 0; z < depth; z++) {
+#ifdef HAVE_OPENMP
+  #pragma omp parallel for 
+#endif
+  for (int x = 0; x < width; x++) {
+    float xd, yd, zd;
+    double val;
+    for (int y = 0; y < height; y++) {
+      for (int z = 0; z < depth; z++) {
         if (x == Gx && y == Gy && z == Gz) {
           DiagBreak();
         }
@@ -4366,7 +4373,7 @@ MRI *GCAMmorphToAtlas(MRI *mri_src, GCA_MORPH *gcam, MRI *mri_morphed, int frame
         //   &xd, &yd, &zd);
 
         // Convert target-crs to input-crs
-        out_of_gcam = GCAMsampleMorph(gcam, (float)x, (float)y, (float)z, &xd, &yd, &zd);
+        int out_of_gcam = GCAMsampleMorph(gcam, (float)x, (float)y, (float)z, &xd, &yd, &zd);
 
         if (!out_of_gcam) {
           // Should not divide by src thick. If anything,
@@ -4377,12 +4384,13 @@ MRI *GCAMmorphToAtlas(MRI *mri_src, GCA_MORPH *gcam, MRI *mri_morphed, int frame
           xd += xoff;
           yd += yoff;
           zd += zoff;
-          for (frame = start_frame; frame <= end_frame; frame++) {
+          for(int frame = start_frame; frame <= end_frame; frame++) {
             if (nint(xd) == Gx && nint(yd) == Gy && nint(zd) == Gz) {
               DiagBreak();
             }
 
-            if (xd > -1 && yd > -1 && ((mri_src->depth == 1 && zd == 0) || (mri_src->depth > 1 && zd > 0)) && xd < mri_src->width && yd < mri_src->height && zd < mri_src->depth) {
+            if (xd > -1 && yd > -1 && ((mri_src->depth == 1 && zd == 0) || (mri_src->depth > 1 && zd > 0)) && 
+		xd < mri_src->width && yd < mri_src->height && zd < mri_src->depth) {
               if (sample_type == SAMPLE_CUBIC_BSPLINE) {
                 MRIsampleBSpline(bspline, xd, yd, zd, frame, &val);
               }
@@ -16334,7 +16342,11 @@ GCA_MORPH *GCAMconcat3(LTA *lta1, GCAM *gcam, LTA *lta2, GCAM *out)
         lta2 = LTAinvert(lta2, /*output*/lta2);
       }
       else {
-        ErrorExit(ERROR_BADPARM, "ERROR: GCAMconcat3(): LTA 2 geometry does not match");
+	printf("Atlas volume geom %g (%d, %d) \n",vg_isEqual_Threshold,
+	       vg_isNotEqualThresh(&gcam->atlas, &lta2->xforms[0].src,vg_isEqual_Threshold),
+	       vg_isNotEqualThresh(&gcam->atlas, &lta2->xforms[0].dst,vg_isEqual_Threshold));
+	vg_print(&gcam->atlas);
+        ErrorExit(ERROR_BADPARM, "ERROR: GCAMconcat3(): LTA 2 geometry does not match atlas src or dst");
       }
     }
   }
@@ -16436,21 +16448,26 @@ GCA_MORPH *GCAMconcat3(LTA *lta1, GCAM *gcam, LTA *lta2, GCAM *out)
 
 GCA_MORPH *GCAMfillInverse(GCA_MORPH *gcam)
 {
-  MRI *mri;
-  char tmpstr[2000];
   int width, height, depth;
-  int x, y, z;
-  GCA_MORPH_NODE *gcamn, *invgcamn;
-  GCA_MORPH *inv_gcam;
 
-  printf("Allocating inv_gcam...(%d, %d, %d)\n", gcam->width, gcam->height, gcam->depth);
-  inv_gcam = GCAMalloc(gcam->width, gcam->height, gcam->depth);  // NOTE: forces same moving and target coordinate spaces!!
+  // use source geometry as target for the inv gcam
+  VOL_GEOM *vg = &(gcam->image);
+  width = vg->width;
+  height = vg->height;
+  depth = vg->depth;
+
+  printf("Allocating inv_gcam...(%d, %d, %d)\n", width, height, depth);
+  GCA_MORPH *inv_gcam = GCAMalloc(width, height, depth);  // NOTE: forces same moving and target coordinate spaces!!
+  if (inv_gcam == NULL)
+    ErrorExit(ERROR_NOMEMORY, "GCAMfillInverse(): GCAMalloc failed");
+  
   inv_gcam->image = gcam->atlas;
   inv_gcam->atlas = gcam->image;
 
-  if ((gcam->mri_xind == NULL) || (gcam->mri_yind == NULL) || (gcam->mri_zind == NULL)) {    
+  if ((gcam->mri_xind == NULL) || (gcam->mri_yind == NULL) || (gcam->mri_zind == NULL)) {
+    char tmpstr[2000];
     sprintf(tmpstr, "%s", (gcam->image).fname);
-    mri = MRIreadHeader(tmpstr, MRI_VOLUME_TYPE_UNKNOWN);
+    MRI *mri = MRIreadHeader(tmpstr, MRI_VOLUME_TYPE_UNKNOWN);
     if (mri == NULL) {
       printf("ERROR: reading %s\n", tmpstr);
       return (NULL);
@@ -16459,22 +16476,21 @@ GCA_MORPH *GCAMfillInverse(GCA_MORPH *gcam)
     // Must invert explicitly
     printf("GCAMfillInverse: Must invert gcam explicitely! \n");
     GCAMinvert(gcam, mri);
+    MRIfree(&mri);
   }
 
   ////////
-  width = inv_gcam->width;
-  height = inv_gcam->height;
-  depth = inv_gcam->depth;
-
-  for (x = 0; x < width; x++) {
-    for (y = 0; y < height; y++) {
-      for (z = 0; z < depth; z++) {
+  for (int x = 0; x < width; x++) {
+    for (int y = 0; y < height; y++) {
+      for (int z = 0; z < depth; z++) {
         if (x == Gx && y == Gy && z == Gz) {
           DiagBreak();
         }
 
-        gcamn = &gcam->nodes[x][y][z];
-        invgcamn = &inv_gcam->nodes[x][y][z];
+	// accessing gcam with [x, y, z] will crash if gcam and inv_gcam don't have the same dimensions.
+	// ??? accessing gcam with index retrieved from gcam->mri_[x|y|z]ind instead ???
+        //gcamn = &gcam->nodes[x][y][z];
+        GCA_MORPH_NODE *invgcamn = &inv_gcam->nodes[x][y][z];
         // missing: all the checks
 
         invgcamn->origx = MRIgetVoxVal(gcam->mri_xind, x, y, z, 0);
@@ -16489,7 +16505,7 @@ GCA_MORPH *GCAMfillInverse(GCA_MORPH *gcam)
         invgcamn->yn = MRIgetVoxVal(gcam->mri_yind, x, y, z, 0);
         invgcamn->zn = MRIgetVoxVal(gcam->mri_zind, x, y, z, 0);
 
-        invgcamn->label = gcamn->label;
+        //invgcamn->label = gcamn->label;
       }
     }
   }

@@ -909,6 +909,12 @@ int MRIasegContraLatLabel(int id)
   case Right_Amygdala_Anterior:
     id2 = Left_Amygdala_Anterior;
     break;
+  case 138: //Left-Claustrum
+    id2 = 139;
+    break;
+  case 139: //Right-Claustrum
+    id2 = 138;
+    break;
   case 265: // Left-Eyeball
     id2 = 266; 
     break;
@@ -1015,6 +1021,54 @@ MRI *MRIlrswapAseg(MRI *aseg)
   }
   return (asegswap);
 }
+/*!
+\fn MRI *MRIlrswapSeg(MRI *seg, MATRIX *lh, MATRIX *rh)
+\brief Performs a left-right swap of segmentation labels. Caller
+passes the matching lh and rh labels.
+*/
+MRI *MRIlrswapSeg(MRI *seg, MATRIX *lh, MATRIX *rh)
+{
+  if(lh->rows != rh->rows){
+    printf("ERROR: MRIlrswapSeg(): lh=%d != rh=%d\n",lh->rows,rh->rows);
+    return(NULL);
+  }
+
+  MRI *segswap = MRIclone(seg, NULL);
+  MRIcopyPulseParameters(seg, segswap);
+  if(seg->ct) segswap->ct = CTABdeepCopy(seg->ct);
+
+  int nswaps = 0;
+#ifdef HAVE_OPENMP
+  #pragma omp parallel for reduction(+ : nswaps)
+#endif
+  for(int c = 0; c < seg->width; c++) {
+    for(int r = 0; r < seg->height; r++) {
+      for(int s = 0; s < seg->depth; s++) {
+        int id = MRIgetVoxVal(seg, c, r, s, 0);
+	int id2 = -1;
+	for(int n=1; n<=lh->rows;n++){
+	  if(id == lh->rptr[1][n]) {
+	    id2 = rh->rptr[1][n];
+	    nswaps++;
+	    break;
+	  }
+	  else if(id == rh->rptr[1][n]) {
+	    id2 = lh->rptr[1][n];
+	    nswaps++;
+	    break;
+	  }
+	}
+	if(id2 == -1) id2 = id;
+        MRIsetVoxVal(segswap, c, r, s, 0, id2);
+      }
+    }
+  }
+  printf("MRIlrswapSeg(): nswaps %d\n",nswaps);
+
+  return(segswap);
+}
+
+
 /*!
 \fn MRI *MRIfixAsegWithRibbon(MRI *aseg, MRI *ribbon, MRI *asegfixed)
 \brief Compares aseg.mgz to ribbon.mgz and replaces the aseg values

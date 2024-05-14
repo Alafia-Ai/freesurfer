@@ -50,6 +50,7 @@ static void usage_exit(void);
 static void print_help(void) ;
 static void print_version(void) ;
 static void __printTagsToFile(MRI *mri);
+static void __reportWarp(MRI *mri, const char *fname);
 
 
 const char *Progname ;
@@ -656,12 +657,13 @@ static void do_file(char *fname)
     mriintent = mri->intent;
   }
 
+  // if it is MGZ_INTENT_WARPMAP, report it differently
+  if (mriintent == MGZ_INTENT_WARPMAP)
+    return __reportWarp(mri, fname);
+      
   if ((!(strstr(ext, "m3d") == 0 && strstr(ext, "m3z") == 0
-	 && strstr(ext, "M3D") == 0 && strstr(ext, "M3Z") == 0)) ||
-      mriintent == 3){
-    if (mri != NULL)  // if it is MGZ_INTENT_WARPMAP, read it as GCAM
-      MRIfree(&mri);
-    
+	 && strstr(ext, "M3D") == 0 && strstr(ext, "M3Z") == 0)))
+  {
     fprintf(fpout,"Input file is a 3D morph.\n");
 
     gcam = NULL;
@@ -1284,11 +1286,7 @@ static void do_file(char *fname)
 
       frame = &mri->frames[i] ;
 
-      if ((frame->type != 0) ||
-          (!FZERO(frame->TE)) ||
-          (!FZERO(frame->TR)) ||
-          (!FZERO(frame->flip)) ||
-          (frame->label != 0) ||
+      if ((frame->label != 0) ||
           (!FZERO(frame->thresh)))
       {
         frame_valid = 1 ;
@@ -1299,22 +1297,6 @@ static void do_file(char *fname)
         continue ;
       }
       printf("frame %d info:\n", i) ;
-      if (frame->type != 0)
-      {
-        printf("\ttype = %d\n", frame->type) ;
-      }
-      if (!FZERO(frame->TE))
-      {
-        printf("\tTE = %2.1fms\n", frame->TE) ;
-      }
-      if (!FZERO(frame->TR))
-      {
-        printf("\tTR = %2.1fms\n", frame->TR) ;
-      }
-      if (!FZERO(frame->flip))
-      {
-        printf("\tflip angle = %2.1f deg\n", DEGREES(frame->flip)) ;
-      }
       if (frame->label != 0)
       {
         printf("\tlabel = %s (%d)\n",
@@ -1412,56 +1394,57 @@ void __printTagsToFile(MRI *mri)
     for (int fno = 0; fno < mri->nframes; fno++)
     {
       MRI_FRAME *frame = &mri->frames[fno];
-      printf("  type: %d\n", frame->type);
-      printf("  TE:   %.6f\n", frame->TE);
-      printf("  TR:   %.6f\n", frame->TR);
-      printf("  flip: %.6f\n", frame->flip);
-      printf("  TI:   %.6f\n", frame->TI);
-      printf("  TD:   %.6f\n", frame->TD);
-      printf("  TM:   %.6f\n", frame->TM);
-      printf("  sequence_type:  %d\n", frame->sequence_type);
-      printf("  echo_spacing:   %.6f\n", frame->echo_spacing);
-      printf("  echo_train_len: %.6f\n", frame->echo_train_len);
-      for (int i = 0; i < 3; i++)   printf("  read_dir[%d]:  %.6f\n", i, frame->read_dir[i]);
-      for (int i = 0; i < 3; i++)   printf("  pe_dir[%d]:    %.6f\n", i, frame->pe_dir[i]);
-      for (int i = 0; i < 3; i++)   printf("  slice_dir[%d]: %.6f\n", i, frame->slice_dir[i]);
       printf("  label: %d\n", frame->label);
       printf("  name:  %s\n", frame->name);
-      printf("  dof: %d\n", frame->dof);
-      printf("  m_ras2vox:\n");
-      if (frame->m_ras2vox == NULL)
-	printf("  No frame[%d] m_ras2vox matrix present\n", fno);
-      else
-        MatrixPrintFmt(fpout, "%10f", frame->m_ras2vox);
       printf("  thresh: %.6f\n", frame->thresh);
-      printf("  units:  %d\n", frame->units);
-      if (frame->type == FRAME_TYPE_DIFFUSION_AUGMENTED)  // also store diffusion info
-      {
-        printf("  DX:      %.6f\n", frame->DX);
-        printf("  DY:      %.6f\n", frame->DY);
-        printf("  DZ:      %.6f\n", frame->DZ);
-
-        printf("  DR:      %.6f\n", frame->DR);
-        printf("  DP:      %.6f\n", frame->DP);
-        printf("  DS:      %.6f\n", frame->DS);
-        printf("  bvalue:  %.6f\n", frame->bvalue);
-        printf("  TM:      %.6f\n", frame->TM);
-
-        printf("  D1_ramp: %ld\n", frame->D1_ramp);
-        printf("  D1_flat: %ld\n", frame->D1_flat);
-        printf("  D1_amp:  %.6f\n", frame->D1_amp);
-
-        printf("  D2_ramp: %ld\n", frame->D2_ramp);
-        printf("  D2_flat: %ld\n", frame->D2_flat);
-        printf("  D2_amp:  %.6f\n", frame->D2_amp);
-
-        printf("  D3_ramp: %ld\n", frame->D3_ramp);
-        printf("  D3_flat: %ld\n", frame->D3_flat);
-        printf("  D3_amp:  %.6f\n", frame->D3_amp);
-
-        printf("  D4_ramp: %ld\n", frame->D4_ramp);
-        printf("  D4_flat: %ld\n", frame->D4_flat);
-        printf("  D4_amp:  %.6f\n", frame->D4_amp);
-      }
     }
+}
+
+
+void __reportWarp(MRI *mri, const char *fname)
+{
+  printf("Input file is a 3D morph.\n");
+      
+  printf("Volume information for %s\n", fname);
+  printf("          type: %s\n", type_to_string(mri_identify(fname)));
+  printf("        intent: %s (%d)\n", MRI::intentName(mri->intent), mri->intent);
+  printf("        format: %s (%d)\n",
+         mri->warpFieldFormat == WarpfieldDTFMT::WARPFIELD_DTFMT_ABS_CRS  ? "ABS_CRS"  :
+         mri->warpFieldFormat == WarpfieldDTFMT::WARPFIELD_DTFMT_DISP_CRS ? "DISP_CRS" :
+	 mri->warpFieldFormat == WarpfieldDTFMT::WARPFIELD_DTFMT_ABS_RAS  ? "ABS_RAS"  :
+	 mri->warpFieldFormat == WarpfieldDTFMT::WARPFIELD_DTFMT_DISP_RAS ? "DISP_RAS" :
+	 "UNKNOWN", mri->type);
+  printf("       spacing: %d\n", mri->gcamorphSpacing);
+  printf("       exp_k  : %.6f\n", mri->gcamorphExp_k);
+
+  printf("    dimensions: %d x %d x %d x %d\n",
+         mri->width, mri->height, mri->depth, mri->nframes) ;    
+  printf("   voxel sizes: %6.6f, %6.6f, %6.6f\n",
+         mri->xsize, mri->ysize, mri->zsize) ;
+  printf("     data type: %s (%d)\n",
+         mri->type == MRI_UCHAR   ? "UCHAR" :
+         mri->type == MRI_SHORT   ? "SHORT" :
+         mri->type == MRI_USHRT   ? "USHRT" :
+         mri->type == MRI_INT     ? "INT" :
+         mri->type == MRI_LONG    ? "LONG" :
+         mri->type == MRI_BITMAP  ? "BITMAP" :
+         mri->type == MRI_TENSOR  ? "TENSOR" :
+         mri->type == MRI_FLOAT   ? "FLOAT" : "UNKNOWN", mri->type);
+
+  printf("\nras xform %spresent\n", mri->ras_good_flag ? "" : "not ") ;
+  printf("    xform info: x_r = %8.4f, y_r = %8.4f, z_r = %8.4f, "
+         "c_r = %10.4f\n",
+         mri->x_r, mri->y_r, mri->z_r, mri->c_r);
+  printf("              : x_a = %8.4f, y_a = %8.4f, z_a = %8.4f, "
+         "c_a = %10.4f\n",
+         mri->x_a, mri->y_a, mri->z_a, mri->c_a);
+  printf("              : x_s = %8.4f, y_s = %8.4f, z_s = %8.4f, "
+         "c_s = %10.4f\n",
+         mri->x_s, mri->y_s, mri->z_s, mri->c_s);
+    
+  // VOL_GEOM::vgprint() prints to stderr
+  printf("\n3D morph source geometry:\n");
+  mri->gcamorph_image_vg.vgprint();
+  printf("\n3D morph target geometry:\n");
+  mri->gcamorph_atlas_vg.vgprint();      
 }

@@ -1119,6 +1119,10 @@ COLOR_TABLE *znzCTABreadFromBinaryV2(znzFile fp)
                  "was %d",
                  len));
   name = (char *)malloc(len + 1);
+  /* 
+   * if the file comes from surfa.io.fsio.write_binary_lookup_table(), len = 0.
+   * if the file comes from freesurfer/utils/colortab.cpp::znzCTABwriteIntoBinaryV2(), len > 0.
+   */
   znzread(name, sizeof(char), len, fp);
   strncpy(ct->fname, name, STRLEN-1);
   free(name);
@@ -1463,6 +1467,7 @@ int CTABannotationAtIndex(COLOR_TABLE *ct, int index, int *annot)
   int annotation;
 
   if (NULL == ct) ErrorReturn(ERROR_BADPARM, (ERROR_BADPARM, "CTABannotationAtIndex: ct was NULL"));
+  // invalid index -1 is treated as error. This is different from index_to_annotation().
   if (index < 0 || index >= ct->nentries)
     ErrorReturn(ERROR_BADPARM, (ERROR_BADPARM, "CTABannotationAtIndex: index %d was OOB", index));
   if (NULL == annot) ErrorReturn(ERROR_BADPARM, (ERROR_BADPARM, "CTABannotationAtIndex: output parameter was NULL"));

@@ -40,7 +40,7 @@
       <argument>--infsl &lt;in.nii.gz&gt;</argument>
       <explanation>input FSL warp (recommend to use with --insrcgeom)</explanation>
       <argument>--inspm &lt;y_rinput.nii&gt;</argument>
-      <explanation>input SPM warp (use use with --insrcgeom), data format is either abs-crs (default) or abs-ras (use --inwarpformat to specify)</explanation>
+      <explanation>input SPM warp (use use with --insrcgeom), data format is either abs-ras (default) or abs-crs (use --inwarpformat to specify)</explanation>
       <argument>--inlps, --initk &lt;in.nii.gz&gt;</argument>
       <explanation>input LPS-to-LPS displacement field (e.g. ITK, ANTs)</explanation>
       <argument>--inras &lt;in.nii.gz&gt;</argument>
@@ -75,6 +75,8 @@
       <explanation>specify warp data format: abs-crs, disp-crs, abs-ras, or disp-ras (default is abs-crs)</explanation>      
       <argument>--outwarpformat outwarp-format</argument>
       <explanation>specify warp data format: abs-crs, disp-crs, abs-ras, or disp-ras (default is abs-crs)</explanation>
+      <argument>--vg-thresh vgthresh</argument>
+      <explanation>threshold for testing diffs in volume geom</explanation>
     </optional-flagged>
   </arguments>
   <example>Convert FSL warp to M3Z (FreeSurfer):

@@ -5620,7 +5620,206 @@ HISTOGRAM *HISTOseg(MRI *seg, int segid, MRI *vol, double bmin, double bmax, dou
   return(h);
 }
 
+/*!
+\fn MRI *MRIvolTopoFix(MRI *binseg0, int onval, MRI *binseg, int ndilationsmax, int nerodesmax, int ntopoerodesmax)
+\brief Fixes the topology of the binary segmentation using dilations
+and erosions. The segmentation must be binary with on value =
+onval. Fills holes only. The new segmentation will have all the same
+voxels as the input seg plus whatever need to be added to make the seg
+topo correct. The method is deterministic when given all the same
+inputs, but there may be differences with simple shifts or crops. Some
+weird things can happen if the dilation hits the edge of the volume;
+need to debug at some point, but make sure you have good padding.
+*/
+MRI *MRIvolTopoFix(MRI *binseg0, int onval, MRI *binseg, int ndilationsmax, int nerodesmax, int ntopoerodesmax)
+{
+  if(binseg0 == binseg){
+    printf("ERROR: FillIt(): output=input\n");
+    return(NULL);
+  }
+  // mri has to be binarized with on-value=onval
 
+  // First check whether it is already topo correct
+  int nvertices, nfaces, nedges,eno,n;
+  MRIS *surf;
+  surf = MRIStessellate(binseg0,onval,0);
+  eno = MRIScomputeEulerNumber(surf, &nvertices, &nfaces, &nedges) ;
+  MRISfree(&surf);
+  if(eno == 2) return(binseg0);
+
+  binseg = MRIcopy(binseg0,binseg);
+  MRIcopyPulseParameters(binseg0,binseg);
+  if(binseg0->ct) binseg->ct = CTABdeepCopy(binseg0->ct);
+
+  // Get a list of the origninal voxels to protect them while eroding
+  // I think this could be multi-threaded
+  int hitedge=0;
+  std::vector<std::vector<int>> crs;
+  for(int c=0; c < binseg->width; c++){
+    for(int r=0; r < binseg->height; r++){
+      for(int s=0; s < binseg->depth; s++){
+	double val = MRIgetVoxVal(binseg,c,r,s,0);
+	if(val < 0.5) continue;
+	std::vector<int> crs0;
+	crs0.push_back(c);
+	crs0.push_back(r);
+	crs0.push_back(s);
+	crs.push_back(crs0);
+	if(c == 0 || c == binseg->width-1 ||
+	   r == 0 || r == binseg->height-1 ||
+	   s == 0 || s == binseg->depth-1) hitedge ++;
+      }
+    }
+  }
+  printf("Found %d voxels in binseg\n",(int)crs.size());
+  if(hitedge) printf("WARNING: binseg has %d edge voxels. You may want "
+		     "to add some padding if results are not good\n",hitedge);
+
+  // Make a copy so can protect during topoerode
+  MRI *mrisrc = MRIcopy(binseg, NULL);
+  MRIcopyPulseParameters(binseg,mrisrc);
+
+  // Dilate until the topo defects go away. Weird stuff can happen in
+  // the erosion if dilation hits the edge.  Could just fill the
+  // entire volume or use MRIvolTopoDilateOne() or wrap an ellipsoid
+  // around the shape.
+  printf("\nDilating ============================\n");
+  n=0;
+  while(1){
+    n++;
+    printf("dilate n=%d eno=%d\n",n,eno);
+    MRI *mritmp = MRIdilate6(binseg, NULL);
+    MRIsetEdges(mritmp, 0, mritmp); // edge hack, does not work well
+    MRIfree(&binseg);
+    binseg = mritmp;
+    surf = MRIStessellate(binseg,onval,0);
+    eno = MRIScomputeEulerNumber(surf, &nvertices, &nfaces, &nedges) ;
+    MRISfree(&surf);
+    if(eno == 2 || n > ndilationsmax){
+      if(eno == 2)  printf("  no defects found, breaking from dilation\n");
+      else{
+	printf("  ERROR: number of dilations > ndilationsmax=%d\n",ndilationsmax);
+	return(NULL);
+      }
+      break;
+    }
+  }
+
+  // Erode until a topo defect appears (take the previous one)
+  // This is probably redundant with TopoErode below, but it 
+  // may speed things up.
+  printf("\nEroding ============================\n");
+  n=0;
+  while(1){
+    n++;
+    printf("erode n=%d eno=%d\n",n,eno);
+    MRI *mricopy = MRIcopy(binseg, NULL); // copy in case defect shows up here
+    // Erode
+    MRI *mritmp = MRIerodeNN(binseg,NULL,NEAREST_NEIGHBOR_FACE,1);
+    // Protect the true seg voxels from erosion
+    for(int k=1; k < crs.size(); k++)
+      MRIsetVoxVal(mritmp,crs[k][0],crs[k][1],crs[k][2],0,onval);
+    // Test whether there is a defect after the erosion
+    surf = MRIStessellate(mritmp,onval,0);
+    eno = MRIScomputeEulerNumber(surf, &nvertices, &nfaces, &nedges) ;
+    MRISfree(&surf);
+    if(eno != 2 || n > nerodesmax){
+      if(eno != 2)  printf("  defects found, breaking from erode, and reverting to previous\n");
+      else          printf("  WARNING: number of erodes > nerodesmax=%d\n",nerodesmax);
+      MRIfree(&mritmp);
+      MRIfree(&binseg);
+      binseg = mricopy;
+      break;
+    }
+    MRIfree(&mricopy);
+    MRIfree(&binseg);
+    binseg = mritmp;
+  }
+
+  printf("\nTopoEroding ============================\n");
+  n=0;
+  while(1){
+    n++;
+    int nhits = MRIvolTopoErodeOne(binseg, mrisrc);
+    surf = MRIStessellate(binseg,onval,0);
+    eno = MRIScomputeEulerNumber(surf, &nvertices, &nfaces, &nedges) ;
+    MRISfree(&surf);
+    printf("n=%d nhits = %d eno=%d\n",n,nhits,eno);
+    if(nhits == 0 || n > ntopoerodesmax){
+      if(n > ntopoerodesmax) printf("  WARNING: number of topoerodes > max=%d\n",ntopoerodesmax);
+      break;
+    }
+  }
+
+  MRIcopyPulseParameters(mrisrc,binseg);
+  MRIfree(&mrisrc);
+
+  return(binseg);
+}
+
+/*!
+\fn int MRIvolTopoErodeOne(MRI *binvol, const MRI *keepmask)
+\brief Erodes a layer of boundary voxels. A boundary voxel is only eroded if its erosion 
+would not change the Euler characteristic. Binvol is a binary volume where on is >0.5.
+Voxels in the keepmask are not eroded. The final result may depend on the order that
+the voxels are searched (eg, rotating the input could change results).
+*/
+int MRIvolTopoErodeOne(MRI *binvol, const MRI *keepmask)
+{
+  // only consider voxels on the boundary of the input binvol
+  MRI *mrie6 = MRIerodeNN(binvol,NULL,NEAREST_NEIGHBOR_FACE,1);
+
+  int nhits=0;
+  for(int c=1; c < binvol->width-1; c++){
+    for(int r=1; r < binvol->height-1; r++){
+      for(int s=1; s < binvol->depth-1; s++){
+	if(keepmask && MRIgetVoxVal(keepmask,c,r,s,0)>0.5) continue;
+	int v = MRIgetVoxVal(binvol,c,r,s,0);
+	if(v < 0.5) continue; // voxel not set so can't erode
+	v = MRIgetVoxVal(mrie6,c,r,s,0);
+	if(v > 0.5) continue; // voxel not a boundary voxel
+	int dEC = QuadEulerCharChange(binvol, NULL, c, r, s);
+	if(dEC != 0) continue; // skip voxel because eroding it would change the EC
+	MRIsetVoxVal(binvol,c,r,s,0,0);
+	nhits++;
+      }
+    }
+  }
+  MRIfree(&mrie6);
+  return(nhits);
+}
+/*!
+\fn int MRIvolTopoDilateOne(MRI *binvol, int onval)
+\brief Dilate a layer of boundary voxels. A boundary voxel is only
+dilated if its dilation would not change the Euler
+characteristic. Binvol is a binary volume where on is >0.5.  The final
+result may depend on the order that the voxels are searched (eg,
+rotating the input could change results).
+*/
+int MRIvolTopoDilateOne(MRI *binvol, int onval)
+{
+  // only consider voxels on the boundary of the input binvol
+  MRI *mrid6 = MRIdilate6(binvol,NULL);
+
+  int nhits=0,dECsum=0;
+  for(int c=0; c < binvol->width; c++){
+    for(int r=0; r < binvol->height; r++){
+      for(int s=0; s < binvol->depth; s++){
+	int v = MRIgetVoxVal(binvol,c,r,s,0);
+	if(v > 0.5) continue; // voxel set so can't dilate
+	v = MRIgetVoxVal(mrid6,c,r,s,0);
+	if(v < 0.5) continue; // voxel not a boundary voxel
+	int dEC = QuadEulerCharChange(binvol, NULL, c, r, s);
+	dECsum += dEC;
+	if(dEC == 0) continue; // skip voxel because dilating it would not change the EC
+	MRIsetVoxVal(binvol,c,r,s,0,onval); //dilate
+	nhits++;
+      }
+    }
+  }
+  MRIfree(&mrid6);
+  return(nhits);
+}
 /*!
   \fn int QuadEulerCharChange(MRI *vol, MRI *mask, int c, int r, int s)
   \brief Determines how the Euler Characteristic of a hypothetical
@@ -5630,94 +5829,224 @@ HISTOGRAM *HISTOseg(MRI *seg, int segid, MRI *vol, double bmin, double bmax, dou
   (vol). If the mesh has no topological defects, then it should have
   EC=2.  If the given voxel were to be added and the mesh regenerated,
   the mesh's EC would change by the amount returned by this function
-  (computed without having to have ever generated a mesh). No bounds
-  checking is done on (c,r,s); since the nearest neighbors are
-  evaluated, (c,r,s) should be within [1:dimsize-2]. If mask is used,
-  it should be the same size as vol. No neighbors are considered if
-  they are ouside of the mask (this has not been tested). A voxel in
-  vol or mask is considered "set" if its value is greather than 0.5.
-  There is no check to determine whether the passed voxel is in the
-  mask.  See also QuadEulerCharChangeTest().
+  (computed without having to have ever generate a mesh). When reading
+  the code below, that three things can happen when adding an element:
+  (1) it does not overlap with an existing element, so it will change
+  the EC. (2) It does overlap with an existing element and the element
+  will disappear from the mesh when the new one is added (and so
+  changes the EC), and (3) It does overlap with an existing element
+  and the element will not disappear (and so does NOT change the EC).
+  No bounds checking is done on (c,r,s); since the nearest neighbors
+  are evaluated, (c,r,s) should be within [1:dimsize-2]. If mask is
+  used, it should be the same size as vol. No neighbors are considered
+  if they are ouside of the mask (this has not been tested). A voxel
+  in vol or mask is considered "set" if its value is greather than
+  0.5.  There is no check to determine whether the passed voxel is in
+  the mask.  See also QuadEulerCharChangeTest().
 */
 int QuadEulerCharChange(MRI *vol, MRI *mask, int c, int r, int s)
 {
-  int dc, dr, ds, dsum, nhits;
+  // dont just return if this voxel is set this as it prevents the
+  // ability to see what would happen if this voxel were to be unset.
+  //if(MRIgetVoxVal(vol,c,r,s,0)>0.5) return(0); 
+  int dc, dr, ds, dsum, nhits,debug=0;
+  if(c==Gx && r==Gy && s==Gz) debug = 1;
+  if(debug) printf("  debug vox %d %d %d\n",c,r,s);
   int deltaEC=0;
   for(dc = -1; dc <= 1; dc++){
     for(dr = -1; dr <= 1; dr++){
       for(ds = -1; ds <= 1; ds++){
 	if(mask && MRIgetVoxVal(mask,c+dc,r+dr,s+ds,0) < 0.5) continue;
 	dsum = fabs(dc) + fabs(dr) + fabs(ds);
-	if(dsum==1){ //face
+	if(dsum==0) continue; // no need to do itself
+	nhits = 0;
+	// determine whether neighbor voxel is out of bounds (oob)
+	int coob = 0;
+	if(c+dc < 0 || c+dc >= vol->width)  coob=1;
+	int roob = 0;
+	if(r+dr < 0 || r+dr >= vol->height) roob=1;
+	int soob = 0;
+	if(s+ds < 0 || s+ds >= vol->depth)  soob=1;
+	if(dsum==1){ //face neighbor
 	  // look at single voxel that shares this face
-	  if(MRIgetVoxVal(vol,c+dc,r+dr,s+ds,0) > 0.5){
+	  if(!coob && !roob && !soob && MRIgetVoxVal(vol,c+dc,r+dr,s+ds,0) > 0.5){
 	    // face is already part of the surface so will lose both.
 	    // -1 means dont add new face and remove the face that is there
 	    deltaEC--;
+	    if(debug) printf("face %2d %2d %2d removed dEC=%d\n",dc,dr,ds,deltaEC);
 	    continue;
 	  }
-	  // If it gets here, then the face can be added, which increases the EC by 1
+	  // If it gets here, then the face can be added (either
+	  // because the neighbor voxel is not set or it is OOB),
+	  // which increases the EC by 1
 	  deltaEC++;
+	  if(debug) printf("face %2d %2d %2d added dEC=%d\n",dc,dr,ds,deltaEC);
 	}
 	if(dsum==2){ //edge
 	  // Look at the three other voxels that share this edge
 	  // One of the voxels is always at +(dc,dr,ds)
-	  nhits = 0;
-	  if( MRIgetVoxVal(vol,c+dc,r+dr,s+ds,0) > 0.5 ) nhits++;
+	  if(!coob && !roob && !soob &&  MRIgetVoxVal(vol,c+dc,r+dr,s+ds,0) > 0.5 ) nhits++;
 	  // For the remaining two voxels ...
 	  if(dc==0){
 	    // One voxel is a +dr the other is at +ds
-	    if( MRIgetVoxVal(vol, c, r+dr, s,    0) > 0.5 ) nhits++;
-	    if( MRIgetVoxVal(vol, c, r   , s+ds, 0) > 0.5 ) nhits++;
+	    if(!roob && MRIgetVoxVal(vol, c, r+dr, s,    0) > 0.5 ) nhits++;
+	    if(!soob && MRIgetVoxVal(vol, c, r   , s+ds, 0) > 0.5 ) nhits++;
 	  }
 	  if(dr==0){
 	    // One voxel is a +dc the other is at +ds
-	    if( MRIgetVoxVal(vol, c+dc, r, s,    0) > 0.5 ) nhits++;
-	    if( MRIgetVoxVal(vol, c,    r, s+ds, 0) > 0.5 ) nhits++;
+	    if(!coob && MRIgetVoxVal(vol, c+dc, r, s,    0) > 0.5 ) nhits++;
+	    if(!soob && MRIgetVoxVal(vol, c,    r, s+ds, 0) > 0.5 ) nhits++;
 	  }
 	  if(ds==0){
 	    // One voxel is a +dc the other is at +dr
-	    if( MRIgetVoxVal(vol, c+dc, r,    s, 0)  > 0.5 ) nhits++;
-	    if( MRIgetVoxVal(vol, c,    r+dr, s, 0)  > 0.5 ) nhits++;
+	    if(!coob &&  MRIgetVoxVal(vol, c+dc, r,    s, 0)  > 0.5 ) nhits++;
+	    if(!roob &&  MRIgetVoxVal(vol, c,    r+dr, s, 0)  > 0.5 ) nhits++;
 	  }
 	  if(nhits == 0) {
 	    // No other voxels claims this edge, so, if this voxel is added
 	    // this edge causes the EC to decrease by 1
 	    deltaEC--;
+	    if(debug) printf("edge %2d %2d %2d added dEC=%d\n",dc,dr,ds,deltaEC);
 	  }
 	  if(nhits == 3) {	  
 	    // All 3 other voxels claim this edge. If the voxel is added,
 	    // then this edge will be lost, so EC increases by 1
 	    deltaEC++;
+	    if(debug) printf("edge %2d %2d %2d removed dEC=%d\n",dc,dr,ds,deltaEC);
 	  }
+	  // If nhits != 0 and nhits != 3 then the edge will correspond to an existing
+	  // edge that will not be lost by adding this voxel. As a result, no change in EC
 	}
-	if(dsum==3){ //corner
+	if(dsum==3){ //corner/vertex
 	  // Look at the seven other voxels that share this corner
-	  nhits = 0;
-	  if( MRIgetVoxVal(vol, c,    r,    s+ds, 0) > 0.5 ) nhits++;
-	  if( MRIgetVoxVal(vol, c,    r+dr, s,    0) > 0.5 ) nhits++;
-	  if( MRIgetVoxVal(vol, c,    r+dr, s+ds, 0) > 0.5 ) nhits++;
-	  if( MRIgetVoxVal(vol, c+dc, r,    s,    0) > 0.5 ) nhits++;
-	  if( MRIgetVoxVal(vol, c+dc, r,    s+ds, 0) > 0.5 ) nhits++;
-	  if( MRIgetVoxVal(vol, c+dc, r+dr, s,    0) > 0.5 ) nhits++;
-	  if( MRIgetVoxVal(vol, c+dc, r+dr, s+ds, 0) > 0.5 ) nhits++;
+	  if(!soob &&                   MRIgetVoxVal(vol, c,    r,    s+ds, 0) > 0.5 ) nhits++;
+	  if(!roob &&                   MRIgetVoxVal(vol, c,    r+dr, s,    0) > 0.5 ) nhits++;
+	  if(!roob && !soob &&          MRIgetVoxVal(vol, c,    r+dr, s+ds, 0) > 0.5 ) nhits++;
+	  if(!coob &&                   MRIgetVoxVal(vol, c+dc, r,    s,    0) > 0.5 ) nhits++;
+	  if(!coob && !soob &&          MRIgetVoxVal(vol, c+dc, r,    s+ds, 0) > 0.5 ) nhits++;
+	  if(!coob && !roob &&          MRIgetVoxVal(vol, c+dc, r+dr, s,    0) > 0.5 ) nhits++;
+	  if(!coob && !roob && !soob && MRIgetVoxVal(vol, c+dc, r+dr, s+ds, 0) > 0.5 ) nhits++;
 	  if(nhits == 0) {
 	    // No other voxels claims this corner, so, if this voxel is added
 	    // this corner causes the EC to increase by 1
 	    deltaEC++;
+	    if(debug) printf("vertex %2d %2d %2d added dEC=%d\n",dc,dr,ds,deltaEC);
 	  }
 	  if(nhits == 7) {	  
 	    // All 7 other voxels claim this corner. If the voxel is added,
 	    // then this corner will be lost, so EC decreases by 1
 	    deltaEC--;
+	    if(debug) printf("vertex %2d %2d %2d removed dEC=%d\n",dc,dr,ds,deltaEC);
 	  }
-
+	  // If nhits != 0 and nhits != 7 then the vertex will correspond to an existing
+	  // vertex that will not be lost by adding this voxel. As a result, no change in EC
 	}
 	//printf("%2d %2d %2d   %d   %3d\n",dc,dr,ds,dsum,deltaEC);
       }
     }
   }
+  if(debug) printf("  debug vox %d %d %d %d\n",c,r,s,deltaEC);
   return(deltaEC);
+}
+
+/*!
+  \fn int QuadEulerCharChangeTest2(void)
+  \brief Tests int QuadEulerCharChange() by creating some simple structures
+  and seeing how the EC changes when voxels are added nearby. This is not
+  an exhaustive test, but it covers a lot of territory. I wrote this not
+  knowing that I already had a QuadEulerCharChangeTest(). When TurnOnTestVoxel
+  is 1, then it will set the voxel being tested to 1 (in some cases). This should
+  not have any effect on the output.
+ */
+int QuadEulerCharChangeTest2(int TurnOnTestVoxel)
+{
+  // First, create an MRI structure and create a "sphere" where all
+  // voxels within a 3x3x3 are set *except* for the center voxel.
+  // This structure will be topologically defective.
+  MRI *mri;
+  mri = MRIallocSequence(10,10,10,MRI_INT,1);
+  for(int dc = -1; dc <= 1; dc++){
+    for(int dr = -1; dr <= 1; dr++){
+      for(int ds = -1; ds <= 1; ds++){
+	int dsum = fabs(dc) + fabs(dr) + fabs(ds);
+	if(dsum == 0) continue;
+	MRIsetVoxVal(mri,5+dc,5+dr,5+ds,0,1);
+      }
+    }
+  }
+
+  int err = 0, c;
+
+  // Test adding a cube that shares a single face  (nothing to do with sphere)
+  // dEC = 4 - 8 + (5-1) = 0
+  c = QuadEulerCharChange(mri, NULL, 4, 4, 3);
+  if(TurnOnTestVoxel) MRIsetVoxVal(mri,4,4,3,0,1);
+  if(c != 0) {
+    printf("ERROR: add face dEC = %d exp 0\n",c);
+    err = 2;
+  }
+  if(TurnOnTestVoxel) MRIsetVoxVal(mri,4,4,3,0,0);
+
+  // Add edge neighbor (nothing to do with sphere)
+  // dEC = 6 - 11 + 6 = +1
+  if(TurnOnTestVoxel) MRIsetVoxVal(mri,4,3,3,0,1);
+  c = QuadEulerCharChange(mri, NULL, 4, 3, 3);
+  if(c != 1) {
+    printf("ERROR: add edge dEC = %d exp 1\n",c);
+    err = 3;
+  }
+  if(TurnOnTestVoxel) MRIsetVoxVal(mri,4,3,3,0,0);
+
+  // Add vertex neighbor (nothing to do with sphere)
+  // dEC = 7 - 12 + 6 = +1
+  if(TurnOnTestVoxel) MRIsetVoxVal(mri,3,3,3,0,1);
+  c = QuadEulerCharChange(mri, NULL, 3, 3, 3);
+  if(c != 1) {
+    printf("ERROR: add vertex dEC = %d exp 1\n",c);
+    err = 4;
+  }
+  if(TurnOnTestVoxel) MRIsetVoxVal(mri,3,3,3,0,0);
+
+  // Test how filling in the center voxel changes the EC
+  // Adds no v, e, or f and all are  removed so dEC = -8 -(-12) + 6 = -2
+  c = QuadEulerCharChange(mri, NULL, 5, 5, 5);
+  if(c != -2) {
+    printf("ERROR: fill sphere dEC = %d exp -2\n",c);
+    err = 1;
+  }
+
+  // Unset a corner cube in the 3x3x3 and see what happens if set it
+  // dEC = 1 - (3-3) + (3-3) = 1
+  MRIsetVoxVal(mri,4,4,4,0,0);
+  c = QuadEulerCharChange(mri, NULL, 4, 4, 4);
+  if(c != 1){
+    printf("remove/add corner cube dEC = %d exp 1\n",c);
+    err = 5;
+  }
+  MRIsetVoxVal(mri,4,4,4,0,1);
+
+  // Unset a cube in the middle of the side of the 3x3x3 and see what happens if set it
+  // dEC = 0 -4 + (2-4) = +2
+  MRIsetVoxVal(mri,5,5,4,0,0);
+  c =QuadEulerCharChange(mri, NULL, 5, 5, 4);
+  if(c != 2) {
+    printf("ERROR: remove/add mid cube exp dEC = %d exp 2\n",c);
+    err = 6;
+  }
+  MRIsetVoxVal(mri,5,5,4,0,1);
+
+  // Unset a cube in the edge of the side of the 3x3x3 and see what happens if set it
+  // dEC = 0 - (1-4) + (2-4) = 1
+  MRIsetVoxVal(mri,4,5,4,0,0);
+  c = QuadEulerCharChange(mri, NULL, 4, 5, 4);
+  if(c != 1){
+    printf("ERROR: remove/add edge cube exp dEC = %d exp 1\n",c);
+    err = 7;
+  }
+  MRIsetVoxVal(mri,4,5,4,0,1);
+
+  MRIfree(&mri);
+  return(err);
 }
 
 /*!
@@ -6950,4 +7279,233 @@ MRI *MRIshiftDim(MRI *src, int dim, int nshift, int wrap)
   } // col
 
   return(out);
+}
+
+
+/*!
+  \fn MRI *MRIcropSegHemi(MRI *aseg0, int hemi, int FoV)
+  \brief This function will crop around the segmentations found in a
+  given hemisphere (hemi=1=left, hemi=2=right). The hemi is determined
+  by the column (>128=left, <128=right). The output volume dimensions
+  are set up to have {c,r,s}FoV voxels in the col, row, and slice
+  directions centered around the centroid measured from all segs. If
+  the new FoV extends beyond the input FoV, then it is truncated.
+  Note that the segs from the other hemisphere are zeroed in the
+  output (for the cases that the FoV extends far enough that segs from
+  the other hemi could be included). This function is a bit of a hack.
+  I wrote it for a particular project and I wanted something fast. If
+  it is useful, it could be made more general. The output MRI will
+  share a RAS space with the input MRI.
+ */
+MRI *MRIcropSegHemi(MRI *seg0, int hemi, int cFoV, int rFoV, int sFoV)
+{
+  double csum=0, rsum=0, ssum=0;
+  int nhits=0;
+
+  // Make a copy so that the contra lateral can be zeroed
+  MRI *seg = MRIcopy(seg0,NULL);
+  if(seg0->ct) seg->ct = CTABdeepCopy(seg0->ct);
+
+  // Compute the centroid of the segs on a given hemi
+#ifdef HAVE_OPENMP
+#pragma omp parallel for reduction(+ : csum, rsum, ssum, nhits)
+#endif
+  for(int c=0; c < seg->width; c++){
+    for(int r=0; r < seg->height; r++){
+      for(int s=0; s < seg->depth; s++){
+	int segid = MRIgetVoxVal(seg,c,r,s,0);
+	if(segid == 0) continue;
+	// left is c>128, right is c<128
+	if( (hemi == 1 && c < 128) || (hemi == 2 && c > 128) ){
+	  MRIsetVoxVal(seg,c,r,s,0,0);
+	  continue;
+	}
+	csum += c;
+	rsum += r;
+	ssum += s;
+	nhits++;
+      }
+    }
+  }
+  csum /= nhits;
+  rsum /= nhits;
+  ssum /= nhits;
+
+  printf("MRIcropSegHemi(): hemi %d FoV = (%d,%d,%d) nhits=%d  centroid = (%g,%g,%g)\n",
+	 hemi,cFoV,rFoV,sFoV,nhits,csum,rsum,ssum);
+
+  // Create the region to extract
+  MRI_REGION region;
+  region.x = MAX(round(csum-cFoV/2),0);
+  region.y = MAX(round(rsum-rFoV/2),0);
+  region.z = MAX(round(ssum-sFoV/2),0);
+  region.dx = MIN(cFoV,seg->width);
+  region.dy = MIN(rFoV,seg->height);
+  region.dz = MIN(sFoV,seg->depth);
+
+  printf("Region\n");
+  REGIONprint(stdout,&region);
+
+  // And finally extract the FoV around the centroid
+  MRI *cropped = MRIextractRegion(seg, NULL, &region);
+
+  MRIfree(&seg);
+  return(cropped);
+}
+
+/*!
+\fn MRI *MRIcropToFoV(MRI *mask, int cFoV, int rFoV, int sFoV, double thresh)
+\brief Crops the input volume to be the given FoV voxels around the centroid.
+The centroid is computed from the voxels in mask that are >= thresh. If unspecified,
+thresh will be 0.5
+ */
+MRI_REGION *MRIcropToFoV(MRI *mask, int cFoV, int rFoV, int sFoV, double thresh)
+{
+  double csum=0, rsum=0, ssum=0;
+  int cmin=10e5, cmax=0, rmin=10e5, rmax=0, smin=10e5, smax=0;
+  int nhits=0;
+
+  // Make a copy so that the contra lateral can be zeroed
+  //MRI *crop = MRIcopy(mask,NULL);
+  //if(mask->ct) crop->ct = CTABdeepCopy(mask->ct);
+
+  // Compute the centroid of the mask
+#ifdef HAVE_OPENMP
+#pragma omp parallel for reduction(+ : csum, rsum, ssum, nhits) reduction(min: cmin,rmin,smin) reduction(max: cmax,rmax,smax)
+#endif
+  for(int c=0; c < mask->width; c++){
+    for(int r=0; r < mask->height; r++){
+      for(int s=0; s < mask->depth; s++){
+	double v = MRIgetVoxVal(mask,c,r,s,0);
+	if(v < thresh) continue;
+	//MRIsetVoxVal(crop,c,r,s,0,0);
+	csum += c;
+	rsum += r;
+	ssum += s;
+	nhits++;
+	if(cmin > c) cmin = c;
+	if(rmin > r) rmin = r;
+	if(smin > s) smin = s;
+	if(cmax < c) cmax = c;
+	if(rmax < r) rmax = r;
+	if(smax < s) smax = s;
+      }
+    }
+  }
+  // Actual centroid
+  csum /= nhits;
+  rsum /= nhits;
+  ssum /= nhits;
+
+  printf("MRIcropToFoV(): thresh=%g FoV = (%d,%d,%d) \nnhits=%d  centroid = (%g,%g,%g) min = (%d,%d,%d) max = (%d,%d,%d) delta = (%d,%d,%d) \n",
+	 thresh,cFoV,rFoV,sFoV,nhits,csum,rsum,ssum,cmin,rmin,smin,cmax,rmax,smax,cmax-cmin+1,rmax-rmin+1,smax-smin+1);
+
+  // Create the region to extract
+  MRI_REGION *region = (MRI_REGION *)calloc(sizeof(MRI_REGION),1);
+  region->x = MAX(round(csum-cFoV/2),0);
+  region->y = MAX(round(rsum-rFoV/2),0);
+  region->z = MAX(round(ssum-sFoV/2),0);
+  region->dx = MIN(cFoV,mask->width);
+  region->dy = MIN(rFoV,mask->height);
+  region->dz = MIN(sFoV,mask->depth);
+
+  printf("Region ");
+  REGIONprint(stdout,region);
+
+  // Check for warnings
+  if(region->dx != cFoV) printf("WARNING: cFoV is %d, could not achieve %d\n",region->dx,cFoV);
+  if(region->dy != rFoV) printf("WARNING: rFoV is %d, could not achieve %d\n",region->dy,rFoV);
+  if(region->dz != sFoV) printf("WARNING: sFoV is %d, could not achieve %d\n",region->dz,sFoV);
+  if(region->x  > cmin)         printf("WARNING: clip cmin \n");
+  if(region->dx < (cmax-cmin) ) printf("WARNING: clip cmax \n");
+  if(region->y  > rmin)         printf("WARNING: clip rmin \n");
+  if(region->dy < (rmax-rmin) ) printf("WARNING: clip rmax \n");
+  if(region->z  > smin)         printf("WARNING: clip smin \n");
+  if(region->dz < (smax-smin) ) printf("WARNING: clip smax \n");
+
+  // And finally extract the FoV around the centroid
+  //MRI *cropped = MRIextractRegion(mask, NULL, &region);
+
+  return(region);
+}
+
+/*!
+  \fn MRI *MRItpfpfnSeg(MRI *manseg, MRI *autoseg, std::vector<int> segids, MRI *tpfpfn)
+  \brief Routine to create a segmentation of 1=true positives (tp),
+  2=false positives, (fp), and 3 = true negatives (tn, ie, misses). It
+  takes two segs (first one defines what is true). The vector of
+  segids are the collection of segmentations used for computation;
+  effectively, it binarizes each of the input seg volumes based on all
+  the segids, then computes the TP, etc, based on this binarization
+  (ie, all the segids are combined into a single seg; there are not
+  separate results for each segid in the segids vector). The output
+  seg will have a ctab where 1=tp=green, 2=fp=red, and 3=tn=yellow.
+  The purpose of this seg is to help understand where automatic
+  methods are making mistakes.
+ */
+MRI *MRItpfpfnSeg(MRI *manseg, MRI *autoseg, std::vector<int> segids, MRI *tpfpfn)
+{
+
+  printf("MRItpfpfnSeg(): segids ");
+  for(int n=0; n < segids.size(); n++) printf("%d ",segids[n]);
+  printf("\n");
+
+  if(tpfpfn == NULL){
+    tpfpfn = MRIclone(manseg, NULL);
+    MRIcopyPulseParameters(manseg, tpfpfn);
+  } 
+  else MRIconst(-1,-1,-1,-1,0,tpfpfn); // set MRI to 0
+
+  // Create a color table for the output seg
+  tpfpfn->ct = CTABalloc(4);
+
+  COLOR_TABLE_ENTRY *cte;
+  cte = tpfpfn->ct->entries[0];
+  sprintf(cte->name, "Unknown");
+
+  cte = tpfpfn->ct->entries[1];
+  sprintf(cte->name, "TruePos"); 
+  cte->ri = 0; cte->gi = 255; cte->bi = 0; 
+  cte->rf = 0;cte->gf = 1;cte->bf = 0;
+
+  cte = tpfpfn->ct->entries[2];
+  sprintf(cte->name, "FalsePos"); 
+  cte->ri = 255; cte->gi = 0; cte->bi = 0; 
+  cte->rf = 1;cte->gf = 0;cte->bf = 0;
+
+  cte = tpfpfn->ct->entries[3];
+  sprintf(cte->name, "FalseNeg-Miss"); cte->bi = 255; cte->bf = 1;
+  cte->ri = 255; cte->gi = 255; cte->bi = 0;
+  cte->rf = 1;cte->gf = 1;cte->bf = 0;
+
+  // Go through the volumes and compare
+  int nhits = 0, ntp=0, nfp=0, nfn=0, nman=0, nauto=0;
+#ifdef HAVE_OPENMP
+#pragma omp parallel for reduction(+ : nhits, ntp, nfp, nfn, nman, nauto)
+#endif
+  for(int c=0; c < manseg->width; c++){
+    for(int r=0; r < manseg->height; r++){
+      for(int s=0; s < manseg->depth; s++){
+	int manid = MRIgetVoxVal(manseg,c,r,s,0);
+	std::vector<unsigned int> manmatch = FindMatches(segids, manid);
+	int autoid = MRIgetVoxVal(autoseg,c,r,s,0);
+	std::vector<unsigned int> automatch = FindMatches(segids, autoid);
+	if(manmatch.size()==0 && automatch.size()==0) continue;
+	if(manmatch.size()!=0)  nman++;
+	if(automatch.size()!=0) nauto++;
+	int v=0;
+	if(manmatch.size()!=0 && automatch.size()!=0) {v = 1; ntp++;} // true pos
+	if(manmatch.size()==0 && automatch.size()!=0) {v = 2; nfp++;}// false pos
+	if(manmatch.size()!=0 && automatch.size()==0) {v = 3; nfn++;}// false neg/miss
+	MRIsetVoxVal(tpfpfn,c,r,s,0,v);
+	nhits ++;
+      }
+    }
+  }
+  // Compute some summary stats, mainly for QA/Debug
+  double dice = (double)ntp/(((double)nman+nauto)/2);
+  double tpr  = (double)ntp/nman;
+  double fdr  = (double)nfp/((double)nfp+ntp);
+  printf("nman = %d nauto = %d  dice = %6.4f tpr = %6.4f fdr = %6.4f\n",nman,nauto,dice,tpr,fdr);
+  return(tpfpfn);
 }
