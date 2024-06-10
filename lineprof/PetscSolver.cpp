@@ -19,9 +19,9 @@ PetscSolver::PetscSolver()
 
 PetscSolver::~PetscSolver()
 {
-  if ( A )   MatDestroy(A);
-  if ( rhs ) VecDestroy( rhs );
-  if ( sol ) VecDestroy( sol );
+  if ( A )   MatDestroy(&A);
+  if ( rhs ) VecDestroy( &rhs );
+  if ( sol ) VecDestroy( &sol );
 }
 
 void
@@ -57,7 +57,7 @@ PetscSolver::Update(double convergence)
   // solve the system
   KSP ksp;
   ierr = KSPCreate( PETSC_COMM_WORLD, &ksp); CHKERRQ(ierr);
-  ierr = KSPSetOperators(ksp,A,A,DIFFERENT_NONZERO_PATTERN); CHKERRQ(ierr);
+  ierr = KSPSetOperators(ksp,A,A/*,DIFFERENT_NONZERO_PATTERN*/); CHKERRQ(ierr);
   PC pc;
   ierr = KSPGetPC(ksp, &pc); CHKERRQ(ierr);
   ierr = PCSetType(pc, PCJACOBI); CHKERRQ(ierr);
@@ -85,10 +85,10 @@ PetscSolver::Update(double convergence)
   PetscReal norm;
   ierr = VecAXPY( vcheck, neg_one, rhs ); CHKERRQ(ierr);
   ierr = VecNorm(vcheck, NORM_2, &norm); CHKERRQ(ierr);
-  ierr = VecDestroy(vcheck); CHKERRQ(ierr);
+  ierr = VecDestroy(&vcheck); CHKERRQ(ierr);
 
 
-  ierr = KSPDestroy(ksp); CHKERRQ(ierr);
+  ierr = KSPDestroy(&ksp); CHKERRQ(ierr);
 
   return 0;
 }

@@ -2,7 +2,9 @@ project(AntsN4BiasFieldCorrectionFs)
 
 include_directories(${FS_INCLUDE_DIRS})
 
-add_compile_options(-Wno-self-assign-field)
+if(CMAKE_CXX_COMPILER_ID MATCHES "AppleClang")
+ add_compile_options(-Wno-self-assign-field)
+endif()
 
 # host_os()
 # if( (HOST_OS MATCHES "Ubuntu18") OR (HOST_OS MATCHES "CentOS8") OR (HOST_OS MATCHES "Ubuntu20") )

@@ -30,11 +30,14 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${GEMS_RUNTIME_PATH})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${GEMS_RUNTIME_PATH})
 
 set(CMAKE_CXX_STANDARD 11)
-if(NOT APPLE_ARM64) 
+if(NOT APPLE_ARM64 AND NOT LINUX_ARM64) 
    set(CMAKE_CXX_FLAGS "-fPIC -fpermissive -msse2 -mfpmath=sse")
+   error(Blah)
 endif()
 
-add_compile_options(-Wno-inconsistent-missing-override -Wno-self-assign-field)
+if(CMAKE_CXX_COMPILER_ID MATCHES "AppleClang")
+ add_compile_options(-Wno-inconsistent-missing-override -Wno-self-assign-field)
+endif()
 
 # to set additional debug cxxflags:
 #   export GEMS_DEBUG_CXXFLAG="-DGEMS_DEBUG_RASTERIZE_VOXEL_COUNT"

@@ -6104,8 +6104,11 @@ std::vector<MRIFSSTRUCT> *DICOMRead3(const char *dcmfile, bool convert)
     strcat(DCM2NIIX_OPTS, "b=y,");
   if (!ForceStackSameSeries)
     strcat(DCM2NIIX_OPTS, "m=n,");
-  if (DCM2NIIX_outdir != NULL)
-    sprintf(DCM2NIIX_OPTS, "%so=%s", DCM2NIIX_OPTS, DCM2NIIX_outdir);
+  if (DCM2NIIX_outdir != NULL) {
+    //sprintf(DCM2NIIX_OPTS, "%so=%s", DCM2NIIX_OPTS, DCM2NIIX_outdir);
+    strcat(DCM2NIIX_OPTS, "o=");
+    strcat(DCM2NIIX_OPTS, DCM2NIIX_outdir);
+  }
   
   dcm2niix_fswrapper::setOpts(dcmdir, DCM2NIIX_OPTS);
   int ret = dcm2niix_fswrapper::dcm2NiiOneSeries(dcmfile, convert);

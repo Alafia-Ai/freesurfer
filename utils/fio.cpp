@@ -631,12 +631,12 @@ char *fio_dirname(const char *pathname)
 
   if (l < 2) {
     /* pname is / or . or single character */
-    free(pname);
     dirname = (char *)calloc(2, sizeof(char));
     if (l == 0 || pname[0] == '/')
       dirname[0] = '/';
     else
       dirname[0] = '.';
+    free(pname);
     return (dirname);
   }
 

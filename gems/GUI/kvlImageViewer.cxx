@@ -111,17 +111,17 @@ ImageViewer
   m_Importer = vtkSmartPointer< vtkImageImport >::New();
 
   m_SagittalColors = vtkSmartPointer< vtkImageMapToColors >::New();
-  m_SagittalColors->SetInput( m_Importer->GetOutput() );
+  m_SagittalColors->SetInputConnection( m_Importer->GetOutputPort() );
   m_SagittalColors->SetLookupTable( m_ImageLookupTable );
   m_SagittalColors->PassAlphaToOutputOn();
 
   m_CoronalColors = vtkSmartPointer< vtkImageMapToColors >::New();
-  m_CoronalColors->SetInput( m_Importer->GetOutput() );
+  m_CoronalColors->SetInputConnection( m_Importer->GetOutputPort() );
   m_CoronalColors->SetLookupTable( m_ImageLookupTable );
   m_CoronalColors->PassAlphaToOutputOn();
 
   m_AxialColors = vtkSmartPointer< vtkImageMapToColors >::New();
-  m_AxialColors->SetInput( m_Importer->GetOutput() );
+  m_AxialColors->SetInputConnection( m_Importer->GetOutputPort() );
   m_AxialColors->SetLookupTable( m_ImageLookupTable );
   m_AxialColors->PassAlphaToOutputOn();
 
@@ -131,17 +131,17 @@ ImageViewer
   m_OverlayImporter = vtkSmartPointer< vtkImageImport >::New();
 
   m_SagittalOverlayColors = vtkSmartPointer< vtkImageMapToColors >::New();
-  m_SagittalOverlayColors->SetInput( m_OverlayImporter->GetOutput() );
+  m_SagittalOverlayColors->SetInputConnection( m_OverlayImporter->GetOutputPort() );
   //m_SagittalOverlayColors->SetLookupTable( m_OverlayImageLookupTable );
   m_SagittalOverlayColors->PassAlphaToOutputOn();
 
   m_CoronalOverlayColors = vtkSmartPointer< vtkImageMapToColors >::New();
-  m_CoronalOverlayColors->SetInput( m_OverlayImporter->GetOutput() );
+  m_CoronalOverlayColors->SetInputConnection( m_OverlayImporter->GetOutputPort() );
   //m_CoronalOverlayColors->SetLookupTable( m_OverlayImageLookupTable );
   m_CoronalOverlayColors->PassAlphaToOutputOn();
 
   m_AxialOverlayColors = vtkSmartPointer< vtkImageMapToColors >::New();
-  m_AxialOverlayColors->SetInput( m_OverlayImporter->GetOutput() );
+  m_AxialOverlayColors->SetInputConnection( m_OverlayImporter->GetOutputPort() );
   //m_AxialOverlayColors->SetLookupTable( m_OverlayImageLookupTable );
   m_AxialOverlayColors->PassAlphaToOutputOn();
 
@@ -150,23 +150,23 @@ ImageViewer
   // Set up VTK pipeline for the blended m_Image and m_ImageOverlay
   m_SagittalBlender = vtkSmartPointer< vtkImageBlend >::New();
   m_SagittalActor = vtkSmartPointer< vtkImageActor >::New();
-  m_SagittalActor->SetInput( m_SagittalBlender->GetOutput() );
+  m_SagittalActor->SetInputData( m_SagittalBlender->GetOutput() );
   m_SagittalActor->InterpolateOff();
 
   m_CoronalBlender = vtkSmartPointer< vtkImageBlend >::New();
   m_CoronalActor = vtkSmartPointer< vtkImageActor >::New();
-  m_CoronalActor->SetInput( m_CoronalBlender->GetOutput() );
+  m_CoronalActor->SetInputData( m_CoronalBlender->GetOutput() );
   m_CoronalActor->InterpolateOff();
 
   m_AxialBlender = vtkSmartPointer< vtkImageBlend >::New();
   m_AxialActor = vtkSmartPointer< vtkImageActor >::New();
-  m_AxialActor->SetInput( m_AxialBlender->GetOutput() );
+  m_AxialActor->SetInputData( m_AxialBlender->GetOutput() );
   m_AxialActor->InterpolateOff();
 
 
   // Set up VTK pipeline for the m_Mesh: outline
   vtkSmartPointer< vtkPolyDataMapper >  outlineMapper = vtkSmartPointer< vtkPolyDataMapper >::New();
-  outlineMapper->SetInput( m_OutlineFilter->GetOutput() );
+  outlineMapper->SetInputConnection( m_OutlineFilter->GetOutputPort() );
 
   m_OutlineActor = vtkSmartPointer< vtkActor >::New();
   m_OutlineActor->SetMapper( outlineMapper );
@@ -175,17 +175,17 @@ ImageViewer
 
   // Set up VTK pipeline for the m_Mesh: extract edges to display
   vtkSmartPointer< vtkClipPolyData >  axialEdgeClipper = vtkSmartPointer< vtkClipPolyData >::New();
-  axialEdgeClipper->SetInput( m_EdgeExtracter->GetOutput() );
+  axialEdgeClipper->SetInputConnection( m_EdgeExtracter->GetOutputPort() );
   axialEdgeClipper->SetClipFunction( m_AxialPlane );
   axialEdgeClipper->SetValue( 0.0f );
 
   vtkSmartPointer< vtkTubeFilter >  axialEdgeTuber = vtkSmartPointer< vtkTubeFilter >::New();
-  axialEdgeTuber->SetInput( axialEdgeClipper->GetOutput() );
+  axialEdgeTuber->SetInputConnection( axialEdgeClipper->GetOutputPort() );
   axialEdgeTuber->SetRadius( 0.1f );
   axialEdgeTuber->SetNumberOfSides( 6 );
 
   vtkSmartPointer< vtkPolyDataMapper >  axialEdgeMapper = vtkSmartPointer< vtkPolyDataMapper >::New();
-  axialEdgeMapper->SetInput( axialEdgeTuber->GetOutput() );
+  axialEdgeMapper->SetInputConnection( axialEdgeTuber->GetOutputPort() );
   m_AxialEdgeActor = vtkSmartPointer< vtkActor >::New();
   m_AxialEdgeActor->SetMapper( axialEdgeMapper );
   m_AxialEdgeActor->GetProperty()->SetColor( 1, 0, 0 );
@@ -201,7 +201,7 @@ ImageViewer
   m_SagittalCutter->SetCutFunction( m_SagittalPlane );
 
   vtkSmartPointer< vtkPolyDataMapper >  sagittalCutMapper = vtkSmartPointer< vtkPolyDataMapper >::New();
-  sagittalCutMapper->SetInput( m_SagittalCutter->GetOutput() );
+  sagittalCutMapper->SetInputConnection( m_SagittalCutter->GetOutputPort() );
 
   m_SagittalCutActor = vtkSmartPointer< vtkActor >::New();
   m_SagittalCutActor->SetMapper( sagittalCutMapper );
@@ -217,7 +217,7 @@ ImageViewer
   m_CoronalCutter->SetCutFunction( m_CoronalPlane );
 
   vtkSmartPointer< vtkPolyDataMapper >  coronalCutMapper = vtkSmartPointer< vtkPolyDataMapper >::New();
-  coronalCutMapper->SetInput( m_CoronalCutter->GetOutput() );
+  coronalCutMapper->SetInputConnection( m_CoronalCutter->GetOutputPort() );
 
   m_CoronalCutActor = vtkSmartPointer< vtkActor >::New();
   m_CoronalCutActor->SetMapper( coronalCutMapper );
@@ -233,7 +233,7 @@ ImageViewer
   m_AxialCutter->SetCutFunction( m_AxialPlane );
 
   vtkSmartPointer< vtkPolyDataMapper >  axialCutMapper = vtkSmartPointer< vtkPolyDataMapper >::New();
-  axialCutMapper->SetInput( m_AxialCutter->GetOutput() );
+  axialCutMapper->SetInputConnection( m_AxialCutter->GetOutputPort() );
 
   m_AxialCutActor = vtkSmartPointer< vtkActor >::New();
   m_AxialCutActor->SetMapper( axialCutMapper );
@@ -397,9 +397,9 @@ ImageViewer
 
 
 
-  m_SagittalBlender->SetInput( 0, m_SagittalColors->GetOutput() );
-  m_CoronalBlender->SetInput( 0, m_CoronalColors->GetOutput() );
-  m_AxialBlender->SetInput( 0, m_AxialColors->GetOutput() );
+  m_SagittalBlender->SetInputConnection( 0, m_SagittalColors->GetOutputPort() );
+  m_CoronalBlender->SetInputConnection( 0, m_CoronalColors->GetOutputPort() );
+  m_AxialBlender->SetInputConnection( 0, m_AxialColors->GetOutputPort() );
 
   m_ThreeDRenderer->AddActor( m_SagittalActor );
   m_ThreeDRenderer->AddActor( m_AxialActor );
@@ -479,9 +479,9 @@ ImageViewer
     return;
     }
 
-  m_SagittalBlender->SetInput( 1, m_SagittalOverlayColors->GetOutput() );
-  m_CoronalBlender->SetInput( 1, m_CoronalOverlayColors->GetOutput() );
-  m_AxialBlender->SetInput( 1, m_AxialOverlayColors->GetOutput() );
+  m_SagittalBlender->SetInputConnection( 1, m_SagittalOverlayColors->GetOutputPort() );
+  m_CoronalBlender->SetInputConnection( 1, m_CoronalOverlayColors->GetOutputPort() );
+  m_AxialBlender->SetInputConnection( 1, m_AxialOverlayColors->GetOutputPort() );
 
 
 }
@@ -518,12 +518,12 @@ ImageViewer
   vtkSmartPointer< vtkUnstructuredGrid >  vGrid = this->GetVTKUnstructedGrid( m_Mesh );
 
   // Connect the VTK pipeline bits and pieces
-  m_OutlineFilter->SetInput( vGrid );
-  m_EdgeExtracter->SetInput( vGrid );
+  m_OutlineFilter->SetInputData( vGrid );
+  m_EdgeExtracter->SetInputData( vGrid );
 
-  m_SagittalCutter->SetInput( vGrid );
-  m_CoronalCutter->SetInput( vGrid );
-  m_AxialCutter->SetInput( vGrid );
+  m_SagittalCutter->SetInputData( vGrid );
+  m_CoronalCutter->SetInputData( vGrid );
+  m_AxialCutter->SetInputData( vGrid );
 
   //m_ThreeDRenderer->AddActor( m_OutlineActor );
   m_ThreeDRenderer->AddActor( m_AxialCutActor );
@@ -883,7 +883,7 @@ ImageViewer
   windowToImage->SetInput( this->GetRenderWindow() );
 
   vtkSmartPointer< vtkPNGWriter >  writer = vtkPNGWriter::New();
-  writer->SetInput( windowToImage->GetOutput() );
+  writer->SetInputConnection( windowToImage->GetOutputPort() );
   writer->SetFileName( fileName.c_str() );
   writer->Write();
 

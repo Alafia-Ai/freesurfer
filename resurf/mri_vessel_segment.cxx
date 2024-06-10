@@ -5,7 +5,7 @@
 #include "itkImageFileWriter.h"
 #include "GetPot.h"
 #include "itkThresholdMaximumConnectedComponentsImageFilter.h"
-#include "itkCoherenceEnhancingDiffusionImageFilter.h"
+//#include "itkCoherenceEnhancingDiffusionImageFilter.h"
 #include "itkGradientAnisotropicDiffusionImageFilter.h"
 #include "itkBinaryBallStructuringElement.h"
 #include "itkGrayscaleErodeImageFilter.h"

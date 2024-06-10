@@ -2,7 +2,9 @@ project(AntsDenoiseImageFs)
 
 include_directories(${FS_INCLUDE_DIRS})
 
-add_compile_options(-Wno-self-assign-field)
+if(CMAKE_CXX_COMPILER_ID MATCHES "AppleClang")
+ add_compile_options(-Wno-self-assign-field)
+endif()
 
 add_test_script(NAME AntsDenoiseImageFs_test SCRIPT test.sh)
 

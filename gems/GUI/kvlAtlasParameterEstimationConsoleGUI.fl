@@ -176,7 +176,7 @@ m_NumberOfUpsamplingSteps->do_callback();
     }
   }
   Function {~kvlAtlasParameterEstimationConsoleGUI()} {open return_type virtual
-  } {}
+  } { int dummy = 0;}
   Function {DisplayLabelImage( unsigned int labelImageNumber )} {open return_type {virtual void}
   } {}
   Function {InitializeMesh()} {open return_type {virtual void}

@@ -21,7 +21,7 @@
 #ifndef VIAL_H
 #define VIAL_H
 
-//define NO_CVS_UP_IN_HERE
+//#define NO_CVS_UP_IN_HERE
 
 #ifndef NO_CVS_UP_IN_HERE
 // Needed for CVS - these must be included first or else they don't compile
@@ -40,6 +40,7 @@
 #include <iostream>
 #include <fstream>
 #include "mri.h"
+#include "transform.h"
 
 class AffineReg {
   public:

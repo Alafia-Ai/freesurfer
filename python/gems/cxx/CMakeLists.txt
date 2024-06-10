@@ -1,6 +1,6 @@
 include_directories(${CMAKE_SOURCE_DIR}/gems ${CMAKE_CURRENT_SOURCE_DIR})
 
-if(NOT APPLE_ARM64) 
+if(NOT APPLE_ARM64 AND NOT LINUX_ARM64) 
    set(CMAKE_CXX_FLAGS "-fPIC -fpermissive -msse2 -mfpmath=sse")
 endif()
 
@@ -8,7 +8,9 @@ endif()
 set(CMAKE_CXX_FLAGS_DEBUG "")
 set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "")
 
-add_compile_options(-Wno-inconsistent-missing-override -Wno-self-assign-field)
+if(CMAKE_CXX_COMPILER_ID MATCHES "AppleClang")
+ add_compile_options(-Wno-inconsistent-missing-override -Wno-self-assign-field)
+endif()
 
 pybind11_add_module(gemsbindings
   module.cxx

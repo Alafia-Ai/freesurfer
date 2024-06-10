@@ -4956,8 +4956,13 @@ GCA_SAMPLE *GCAfindStableSamples(GCA *gca,
             if (gcaFindBestSample(gca, x, y, z, best_label, prior_stride / 2, &gcas[nfound]) == NO_ERROR)
             {
               int xv, yv, zv;
-
-              if (((means[0] <= min_unknown) || (means[0] >= max_unknown))) /* disabled check */
+              // SEB: this check doesn't make much sens as it act on a full array...
+              //if (((means[0] <= min_unknown) || (means[0] >= max_unknown))) /* disabled check */
+              bool disabled = false;
+              for(int i=0; i<gca->ninputs && !disabled; ++i)
+                if((means[0][i] <= min_unknown[i] || (means[0][i] >= max_unknown[i])))
+                  disabled = true;
+              if(disabled)
               {
                 if (!GCApriorToVoxel(gca, mri_filled, x, y, z, &xv, &yv, &zv)) {
                   if (MRIgetVoxVal(mri_filled, xv, yv, zv, 0) == 0) {
@@ -23198,7 +23203,7 @@ GC1D *GC1Dcopy(GC1D *gc, int ninputs, int symmetrize, GC1D *gccopy)
     }
 
     // Copy the probabilties. 
-    gccopy->label_priors[r] = (float *)calloc(sizeof(float),gccopy->nlabels[r]);
+    gccopy->label_priors[r] = (float *)calloc(sizeof(float),(short)gccopy->nlabels[r]);
     for(c=0; c < gccopy->nlabels[r]; c++){
       gccopy->label_priors[r][c] = gc->label_priors[rr][c];
     }

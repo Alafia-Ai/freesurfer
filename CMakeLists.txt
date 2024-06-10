@@ -37,6 +37,7 @@ project(freesurfer
 )
 
 # a few build options
+option(LINUX_ARM64 "Build on Linux ARM64 (not autodetected yet)" OFF)
 option(MINIMAL "Only build core components" OFF)
 option(BUILD_GUIS "Build GUI tools" ON)
 option(BUILD_ATTIC "Build deprecated tools from the attic" OFF)
@@ -63,6 +64,10 @@ if(NOT "${USER_SAMSEG_PATH}" STREQUAL "")
     message(WARNING "set INTEGRATE_SAMSEG=ON, USER_SAMSEG_PATH only work with INTEGRATE_SAMSEG=ON")
     set(INTEGRATE_SAMSEG ON)
   endif()
+endif()
+
+if(LINUX_ARM64)
+  add_definitions(-DARM64 -DPNG_ARM_NEON_OPT=0)
 endif()
 
 #  Modern compilers on new platforms often provide many more warnings than older compilers
@@ -211,6 +216,8 @@ endif()
 
 # -------- petsc --------
 find_package(PETSC)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(MPI REQUIRED mpi)
 
 # -------- ann --------
 # ANN is only used by mris_resample
@@ -335,7 +342,8 @@ if(NOT VTK_DIR)
    elseif(HOST_OS MATCHES "Ubuntu22" AND HOST_OS_GCC_VERSION MATCHES "8")
       set(VTK_DIR ${FS_PACKAGES_DIR}/vtk/7.1/lib/cmake/vtk-7.1 CACHE PATH "VTK install directory")
    else()
-      set(VTK_DIR ${FS_PACKAGES_DIR}/vtk/7.1 CACHE PATH "VTK install directory")
+      #set(VTK_DIR ${FS_PACKAGES_DIR}/vtk/7.1 CACHE PATH "VTK install directory")
+      set(VTK_DIR ${FS_PACKAGES_DIR}/vtk/8.2.0 CACHE PATH "VTK install directory")
    endif()
 endif()
 

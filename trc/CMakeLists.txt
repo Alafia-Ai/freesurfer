@@ -10,6 +10,7 @@ if(PETSC_FOUND)
     ${CMAKE_SOURCE_DIR}/packages/tetgen
     ${ITK_INCLUDE_DIRS}
     ${PETSC_INCLUDE_DIR}
+    ${MPI_INCLUDE_DIRS}
   )
 
   # dmri_spline

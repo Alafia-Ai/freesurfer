@@ -24,6 +24,7 @@
 #include <vtkMath.h>
 #include "MyUtils.h"
 #include "MigrationDefs.h"
+#include "LineProf.h"
 
 LayerLineProfile::LayerLineProfile(int nPlane, QObject *parent, LayerPointSet *line1, LayerPointSet *line2) :
   Layer(parent),
