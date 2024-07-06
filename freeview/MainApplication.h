@@ -39,6 +39,8 @@ public slots:
     emit GlobalProgress(n);
   }
 
+  void SetFontSize(int pt);
+
 public:
   bool m_bFreshStart;
 };

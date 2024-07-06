@@ -453,8 +453,22 @@ int MRISedgeMetricEdge(MRIS *surf, int edgeno, int DoGrad)
   if(e->area[0] > e->area[1]) e->maxarea = e->area[0];
   else                        e->maxarea = e->area[1];
   e->dot = DVectorDot(f0->norm,f1->norm);
+  if(fabs(e->dot) > 1000){
+    printf("ERROR: MRISedgeMetricEdge(): edgeno=%d DoGrad=%d\n",edgeno,DoGrad);
+    printf("   vno0=%d vno1=%d fno0=%d fno1=%d\n",e->vtxno[0],e->vtxno[1],e->faceno[0],e->faceno[1]);
+    printf("   f0->norm (%f,%f,%f) f0->norm (%f,%f,%f)\n",
+           f0->norm->rptr[1][1],f0->norm->rptr[2][1],f0->norm->rptr[3][1],
+           f1->norm->rptr[1][1],f1->norm->rptr[2][1],f1->norm->rptr[3][1]);
+    printf("   break %s:%d\n", __FILE__, __LINE__);
+    return(1);
+  }
   if(e->dot > 1.0)  e->dot = +1.0; // might be a slight overflow
   if(e->dot < -1.0) e->dot = -1.0; // might be a slight overflow
+  // angle goes from 0-180.
+  // if hinge is flat, then dot=1, normals are parallel and angle=0
+  // if hinge is folded together, then dot = -1 and angle=180
+  //   note that this folding happens when it is folded in either direction
+  //   so 0 is always the flatest and 180 is always the worst
   e->angle = acos(e->dot)*180/M_PI;
   return(0);
 }

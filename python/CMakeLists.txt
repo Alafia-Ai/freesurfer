@@ -11,12 +11,14 @@ set(UV_INSTEAD_OF_PIP_INSTALL OFF)
 
 if(UV_INSTEAD_OF_PIP_INSTALL)
    ## 04/2024 allow option for uv package installer (added to fspython base distro)
+   # set(PIP_SUBSTRING "uv pip install -v")
    set(PIP_SUBSTRING "uv pip install")
    set(PIP_NODEP_ARG "--no-deps")
    set(PIP_NOVER_ARG "")
    set(PIP_LAST_ARG "--python ${CMAKE_INSTALL_PREFIX}/python")
    set(pip_target_option "--target")
 else()
+   # set(PIP_SUBSTRING "pip install -v")
    set(PIP_SUBSTRING "pip install")
    set(PIP_NODEP_ARG "--no-dependencies")
    set(PIP_NOVER_ARG "--disable-pip-version-check")
@@ -24,8 +26,20 @@ else()
    set(pip_target_option "--target")
 endif()
 
+function(requirements_file_install)
+  if(FSPYTHON_BUILD_REQ)
+      if(NOT APPLE_ARM64)
+         if(FSPYTHON_INSTALL_TREE)
+            install(PROGRAMS requirements-build.txt DESTINATION ../fspython/python)
+         else()
+            install(PROGRAMS requirements-build.txt DESTINATION python)
+         endif()
+      endif()
+   endif()
+endfunction()
+
 function(fspython_script_install)
-   # install the fspython script 
+   # install the fspython script - FOR NOW install in both trees if split tree install 
    if(APPLE_ARM64)
       # Allow script to use local packages with the system or Apple recommended Anaconda python
       install(PROGRAMS fspython.local DESTINATION bin RENAME fspython)
@@ -33,7 +47,6 @@ function(fspython_script_install)
          install(PROGRAMS fspython.local DESTINATION ../fspython/bin RENAME fspython)
       endif() 
    else()
-      # FIX ME: for now install in both main FS tree and separate fspython tree
       install(PROGRAMS fspython DESTINATION bin)
       if(FSPYTHON_INSTALL_TREE)
          install(PROGRAMS fspython DESTINATION ../fspython/bin)
@@ -100,6 +113,14 @@ function(sitepackages_install)
            ## darwin_arm64
   	 message(STATUS "For HOST_OS=${HOST_OS} - no requirements files currently in use with mininconda darwin_arm64.")
         endif()
+     endif()
+  endif()
+  if(NOT APPLE_ARM64)
+     if(INFANT_MODULE)
+        # provide requirements file for infant module to allow for different package revisions compared to what
+        # freesurfer uses (add cmake option -DFSPYTHON_BUILD_REQ=ON to infant options -DINFANT_MODULE=ON -DMINIMAL=ON)
+        set(requirements "-r ${CMAKE_CURRENT_SOURCE_DIR}/requirements-infant.txt")
+        set(requirements_extra "")
      endif()
   endif()
   if(NOT APPLE_ARM64)
@@ -191,10 +212,12 @@ if(DISTRIBUTE_FSPYTHON AND INSTALL_PYTHON_DEPENDENCIES)
    # install base python distribution
    # install C bindings, etc. under python/packages
    # install packages under python/lib/python<rev>/site-packages, add fspython wrapper
+   # install a copy of the requirements-build.txt file if the build was set to use it for the revs of pkgs to install
    python_3_8_base_install()
    packages_install()
    sitepackages_install()
    fspython_script_install()
+   requirements_file_install()
    if(PATCH_FSPYTHON)
       fspython_patch()
    endif()
@@ -218,11 +241,13 @@ if(NOT DISTRIBUTE_FSPYTHON AND INSTALL_PYTHON_DEPENDENCIES)
    # Use an existing 3rd party python instead of base python distribution
    # install C bindings, etc. under python/packages
    # install packages under python/lib/python<rev>/site-packages, add fspython wrapper
+   # install a copy of the requirements-build.txt file if the build was set to use it for the revs of pkgs to install
    set(PKG_TARGET "${pip_target_option}=${FSPYTHON_INSTALL_PREFIX}/python/packages")
    message(STATUS For "HOST_OS=${HOST_OS} PKG_TARGET=${PKG_TARGET}")
    packages_install()
    sitepackages_install()
    fspython_script_install()
+   requirements_file_install()
    if(PATCH_FSPYTHON)
       fspython_patch()
    endif()

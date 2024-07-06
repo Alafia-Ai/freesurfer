@@ -511,6 +511,8 @@ const char *Progname = NULL;
 
 int debug = 0, gdiagno = -1;
 
+int setfilter = 0;
+
 static int soap_bubble_iters = 0 ;
 static MRI *mri_soap_ctrl = NULL ;
 
@@ -1044,6 +1046,15 @@ int main(int argc, char **argv) {
       out = GCAMmorphFromAtlas(in, gcam, NULL, interpcode);
     }
     if(out == NULL) exit(1);
+
+    if(setfilter)
+      {
+	MRI *mri_tmp ;
+	printf("filtering labeled volume...\n") ;
+	mri_tmp = MRImodeFilter(out, NULL, 1) ;
+	MRIfree(&out) ;
+	out = mri_tmp ;
+      }
     
     if(0){
     printf("Extracting region\n");
@@ -1097,7 +1108,10 @@ int main(int argc, char **argv) {
       exit(1);
     }
   }
-  if(mov->ct) out->ct = CTABdeepCopy(mov->ct);
+  else {
+    if(mov->ct  && !invert) out->ct = CTABdeepCopy(mov->ct);
+    if(targ->ct &&  invert) out->ct = CTABdeepCopy(targ->ct);
+  }
 
   err = MRIwrite(out,outvolfile);
   if(err){
@@ -1522,7 +1536,16 @@ static int parse_commandline(int argc, char **argv) {
       Mshear->rptr[1][3] = shear[1]; // xz/col-row - in-plane
       Mshear->rptr[2][3] = shear[2]; // yz/row-slice
       nargsused = 3;
-    } else if ( !strcmp(option, "--gdiagno") ) {
+    } 
+    else if ( !strcmp(option, "--vg-thresh") ) {
+      if (nargc < 1) argnerr(option,1);
+      sscanf(pargv[0],"%lf",&vg_isEqual_Threshold);
+      nargsused = 1;
+    }
+    else if ( !strcmp(option, "--filter") ) {
+      setfilter = 1;
+    }
+    else if ( !strcmp(option, "--gdiagno") ) {
       if (nargc < 1) argnerr(option,1);
       sscanf(pargv[0],"%d",&gdiagno);
       nargsused = 1;
@@ -1716,6 +1739,7 @@ printf("  --precision precisionid : output precision (def is float)\n");
 printf("  --keep-precision  : set output precision to that of input\n");
 printf("  --kernel            : save the trilinear interpolation kernel instead\n");
 printf("   --copy-ctab : setenv FS_COPY_HEADER_CTAB to copy any ctab in the mov header\n");
+printf("   --vg-thresh thresh : set threshold for comparing vol geom\n");
 printf("\n");
 printf("  --gcam mov srclta gcam dstlta vsm interp out\n");
 printf("     srclta, gcam, or vsm can be set to 0 to indicate identity (not regheader)\n");

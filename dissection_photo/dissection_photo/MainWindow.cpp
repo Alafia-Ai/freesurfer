@@ -11,6 +11,7 @@
 #include <QDebug>
 #include <QDateTime>
 #include "cnpy.h"
+#include "ProgressWindow.h"
 
 #define SCRIPT_RETROSPECTIVE "func_retrospective_correction.py"
 #define SCRIPT_FIDUCIALS_CORRECTION "func_fiducials_correction.py"
@@ -57,6 +58,9 @@ MainWindow::MainWindow(QWidget *parent)
 
   ui->widgetImageView->SetNumberOfExpectedPoints(4);
 
+  m_wndProgress = new ProgressWindow(this);
+  m_wndProgress->hide();
+
   qRegisterMetaType<QProcess::ExitStatus>("QProcess::ExitStatus");
   m_proc = new QProcess(this);
   connect(m_proc, SIGNAL(readyReadStandardOutput()), SLOT(OnProcessOutputMessage()));
@@ -79,6 +83,27 @@ MainWindow::~MainWindow()
   s.setValue("MainWindow/SplitterState",  ui->splitter->saveState());
 
   delete ui;
+}
+
+void MainWindow::resizeEvent(QResizeEvent* e)
+{
+  RepositionProgressWindow();
+  QMainWindow::resizeEvent(e);
+}
+
+void MainWindow::moveEvent(QMoveEvent* e)
+{
+  RepositionProgressWindow();
+  QMainWindow::moveEvent(e);
+}
+
+
+void MainWindow::RepositionProgressWindow()
+{
+  QRect rc = m_wndProgress->rect();
+  rc.moveCenter(rect().center());
+  rc.moveTopLeft(rc.topLeft()+this->pos());
+  m_wndProgress->setGeometry(rc);
 }
 
 void MainWindow::OnButtonInputFolder()
@@ -132,8 +157,16 @@ void MainWindow::OnButtonOutputFolderCC()
       m_proc->start(cmd.join(" "));
       m_proc->setProperty("task", "mask_to_cc");
       ui->pushButtonCreateMask->setEnabled(false);
+      ShowProgressWindow(true);
     }
   }
+}
+
+void MainWindow::ShowProgressWindow(bool bShow)
+{
+  m_wndProgress->setVisible(bShow);
+  if (bShow)
+    RepositionProgressWindow();
 }
 
 void MainWindow::OnButtonCalibrationFile()
@@ -199,6 +232,8 @@ void MainWindow::OnButtonLoadMask()
         m_elapsedTimer.start();
         m_fileWatcher.addPath(temp_out_dir);
         m_listQueuedFiles = watch_list;
+        m_nIndex = 0;
+        ShowProgressWindow(true);
       }
       else
       {
@@ -358,13 +393,15 @@ void MainWindow::UpdateIndex()
     QFileInfoList flist = QDir(m_strOutputFolder).entryInfoList(QDir::Files, QDir::Name);
     ui->pushButtonPrevious->setEnabled(m_nIndex > 0);
     ui->pushButtonNext->setEnabled(m_nIndex < flist.size());
+    ui->pushButtonSegmentation->setEnabled(flist.size() == m_listInputFiles.size());
   }
   if (ui->stackedWidget->currentWidget() == ui->pageSegEdit)
   {
     label = ui->labelIndexSeg;
-    QFileInfoList flist = QDir(m_strMaskFolder).entryInfoList(QDir::Files, QDir::Name);
+    m_listMaskFiles = QDir(m_strMaskFolder).entryInfoList(QDir::Files, QDir::Name);
     ui->pushButtonPreviousSeg->setEnabled(m_nIndex > 0);
-    ui->pushButtonNextSeg->setEnabled(m_nIndex < flist.size()-1);
+    ui->pushButtonNextSeg->setEnabled(m_nIndex < m_listMaskFiles.size()-1);
+    ui->pushButtonCC->setEnabled(m_listInputFiles.size() == m_listMaskFiles.size());
   }
   else if (ui->stackedWidget->currentWidget() == ui->pageCC)
   {
@@ -387,6 +424,7 @@ void MainWindow::LoadImage(int n)
   }
   else if (ui->stackedWidget->currentWidget() == ui->pageSegEdit)
   {
+    m_listMaskFiles = QDir(m_strMaskFolder).entryInfoList(QDir::Files, QDir::Name);
     mask_fn = m_listMaskFiles[n].absoluteFilePath();
   }
   else if (ui->stackedWidget->currentWidget() == ui->pageCC)
@@ -570,6 +608,8 @@ void MainWindow::OnProcessError(QProcess::ProcessError er)
   default:
     break;
   }
+
+  ShowProgressWindow(false);
   qDebug() << str;
 }
 
@@ -587,6 +627,8 @@ void MainWindow::OnProcessFinished()
   ui->pushButtonProcess->setEnabled(true);
   if (m_nIndex >= m_listInputFiles.size()-1)
     ui->pushButtonSegmentation->setEnabled(true);
+
+  ShowProgressWindow(false);
 
   QString task;
   if (sender())
@@ -658,15 +700,9 @@ void MainWindow::OnProcessFinished()
   else if (task == "nnunet")
   {
     qDebug() << "nnUNet elapsed time in secs: " << m_elapsedTimer.elapsed()/1000;
-    QFileInfoList list = QDir(m_proc->property("temp_output_folder").toString()).entryInfoList(QDir::Files, QDir::Name);
-    QString out_folder = m_proc->property("output_folder").toString();
-    for (int i = 0; i < list.size(); i++)
-    {
-      QFile::copy(list[i].absoluteFilePath(), QFileInfo(out_folder, list[i].fileName()).absoluteFilePath());
-    }
-    m_listMaskFiles = QDir(out_folder).entryInfoList(QDir::Files, QDir::Name);
     ui->pageSegEdit->setEnabled(true);
     UpdateIndex();
+    OnFileChanged(m_proc->property("temp_output_folder").toString());
   }
 }
 
@@ -756,27 +792,42 @@ void MainWindow::OnFileChanged(const QString& path)
 {
   static QVariantMap last_size_info = QVariantMap();
   QFileInfoList flist = QDir(path).entryInfoList(QStringList("*.npz"), QDir::Files, QDir::Name);
-  if (!flist.isEmpty() && !m_listQueuedFiles.isEmpty())
+  while (!flist.isEmpty())
   {
-    QString fn = flist[0].absoluteFilePath();
-    if (fn == m_listQueuedFiles.first())
+    if (!flist.isEmpty() && !m_listQueuedFiles.isEmpty())
     {
-      if (last_size_info[fn].toInt() == flist[0].size() && flist[0].size() > 0)
+      QString fn = flist[0].absoluteFilePath();
+      if (fn == m_listQueuedFiles.first())
       {
-        QImage image = NpyToImage(fn);
-        QString fn_png = QFileInfo(m_strMaskFolder, QFileInfo(fn).completeBaseName()+".png").absoluteFilePath();
-        image.save(fn_png);
-        m_listQueuedFiles.removeFirst();
-        QFile::remove(fn);
-        ui->pageSegEdit->setEnabled(true);
-        ui->widgetSegCtrls->setEnabled(true);
-        if (ui->widgetImageView->GetMaskFilename().isEmpty())
-          LoadImage(0);
-        UpdateIndex();
+        if (last_size_info[fn].toInt() == flist[0].size() && flist[0].size() > 0)
+        {
+          QImage image = NpyToImage(fn);
+          QString fn_png = QFileInfo(m_strMaskFolder, QFileInfo(fn).completeBaseName()+".png").absoluteFilePath();
+          image.save(fn_png);
+          m_listQueuedFiles.removeFirst();
+          QFile::remove(fn);
+          ui->pageSegEdit->setEnabled(true);
+          ui->widgetSegCtrls->setEnabled(true);
+          if (ui->widgetImageView->GetMaskFilename().isEmpty())
+          {
+            ShowProgressWindow(false);
+            LoadImage(0);
+            QMessageBox::information(this, "Edit Mask", "You can start editing the current mask while waiting for the rest to be generated.");
+          }
+          UpdateIndex();
+          flist = QDir(path).entryInfoList(QStringList("*.npz"), QDir::Files, QDir::Name);
+        }
+        else
+        {
+          last_size_info[fn] = flist[0].size();
+          break;
+        }
       }
       else
-        last_size_info[fn] = flist[0].size();
+        break;
     }
+    else
+      break;
   }
 }
 

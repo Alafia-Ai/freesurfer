@@ -447,6 +447,9 @@ MainWindow::MainWindow( QWidget *parent, MyCmdLineParser* cmdParser ) :
   connect(m_views[3], SIGNAL(MouseIn()), ui->treeWidgetMouseInfo, SLOT(ShowHeaderText()));
   connect(m_views[3], SIGNAL(MouseOut()), ui->treeWidgetMouseInfo, SLOT(ClearHeaderText()));
 
+  connect(ui->widgetAllLayers, SIGNAL(LayerSelectionChanged()), ui->treeWidgetCursorInfo, SLOT(OnLayerSelectionChanged()), Qt::QueuedConnection);
+  connect(ui->widgetAllLayers, SIGNAL(LayerSelectionChanged()), ui->treeWidgetMouseInfo, SLOT(OnLayerSelectionChanged()), Qt::QueuedConnection);
+
   for ( int i = 0; i < 4; i++ )
   {
     connect( this, SIGNAL(SlicePositionChanged(bool)), m_views[i], SLOT(OnSlicePositionChanged(bool)) );
@@ -714,6 +717,14 @@ void MainWindow::LoadSettings()
 
   //  OnPreferences();
   //  m_dlgPreferences->hide();
+  if (m_settings.value("UIFontSize").toInt() > 7)
+  {
+    ((MainApplication*)qApp)->SetFontSize(m_settings["UIFontSize"].toInt());
+  }
+  else
+  {
+    m_settings["UIFontSize"] = font().pointSize();
+  }
 
   for (int i = 0; i < 4; i++)
   {
